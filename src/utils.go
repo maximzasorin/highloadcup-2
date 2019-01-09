@@ -1,5 +1,10 @@
 package main
 
+// /*
+// #include <unistd.h>
+// */
+// import "C"
+
 import (
 	"fmt"
 	"runtime"
@@ -9,10 +14,11 @@ func printMemUsage() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	// For info on each, see: https://golang.org/pkg/runtime/#MemStats
-	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
-	fmt.Printf("\nTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
-	fmt.Printf("\nSys = %v MiB", bToMb(m.Sys))
-	fmt.Printf("\nNumGC = %v\n", m.NumGC)
+	// fmt.Printf("Rss = %v MiB\n", bToMb(uint64(getRSSMemory())))
+	fmt.Printf("Alloc = %v MiB\n", bToMb(m.Alloc))
+	fmt.Printf("TotalAlloc = %v MiB\n", bToMb(m.TotalAlloc))
+	fmt.Printf("Sys = %v MiB\n", bToMb(m.Sys))
+	fmt.Printf("NumGC = %v\n", m.NumGC)
 }
 
 func bToMb(b uint64) uint64 {

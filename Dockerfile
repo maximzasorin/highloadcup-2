@@ -10,6 +10,6 @@ WORKDIR $GOPATH/src/github.com/maximzasorin/highloadcup-2
 ADD ./ .
 
 # build project
-RUN go build -o highloadcup-2 ./src/*
+RUN go build -o highloadcup-2 ./src/*.go
 
 CMD ["./highloadcup-2"]

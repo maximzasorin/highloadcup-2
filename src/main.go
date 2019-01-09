@@ -3,60 +3,87 @@ package main
 import (
 	"archive/zip"
 	"bufio"
-	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"os"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
-	"github.com/francoispqt/gojay"
+	_ "net/http/pprof"
 )
 
 func main() {
-	dataset := os.Getenv("DATASET")
-	// port := os.Getenv("PORT")
+	var (
+		dataset = flag.String("dataset", "/tmp/data", "Dataset")
+		addr    = flag.String("addr", ":80", "Addr")
+	)
+	flag.Parse()
+
+	fmt.Println("Create parser")
+	dicts := NewDicts()
+	parser := NewParser(dicts)
 
 	fmt.Println("Create store")
-	store := NewStore()
+	store := NewStore(parser, dicts)
 
 	fmt.Println("Trying read archive")
 
 	startTime := time.Now()
-	readArchive(dataset+"/data.zip", store)
+	readArchive(*dataset+"/data.zip", parser, store)
 	// readDir(dataset+"/data", store)
 
 	fmt.Println("Total accounts found =", store.Count(), "in", time.Now().Sub(startTime).Round(time.Millisecond))
 
-	fmt.Println("Read options")
-	readOptions(dataset+"/options.txt", store)
+	fmt.Println("Update indexes")
+	store.UpdateIndex()
 
-	printMemUsage()
+	// fmt.Println("Update country cities")
+	// dicts.UpdateCountryCities(store)
+
+	fmt.Println("Read options")
+	readOptions(*dataset+"/options.txt", store)
 
 	fmt.Println("Run GC...")
 	runtime.GC()
 
+	// a := store.Get(uint32(rand.Int31n(30000)))
+	// fmt.Printf("Example = %+v, size = %db\n", a, unsafe.Sizeof(Account{}))
+
+	// fmt.Println("Total with premium =", store.WithPremium())
+	// fmt.Println("Count likes =", store.CountLikes())
+	// fmt.Println("Count sex_f =", store.CountSexF())
+	fmt.Println("Total fnames =", len(dicts.GetFnames()))
+	fmt.Println("Total snames =", len(dicts.GetSnames()))
+	fmt.Println("Total countries =", len(dicts.GetCountries()))
+	fmt.Println("Total cities =", len(dicts.GetCities()))
+	fmt.Println("Total interests =", len(dicts.GetInterests()))
+
 	printMemUsage()
 
-	a := store.Get(uint32(rand.Int31n(30000)))
-	fmt.Printf("Example = %+v, size = %vb\n", a, unsafe.Sizeof(*a))
+	fmt.Println("Start server")
 
-	// printMemUsage()
+	server := NewServer(store, parser, dicts, &ServerOptions{
+		Addr: *addr,
+	})
 
-	// fmt.Println("Start server")
+	go func() {
+		for range time.Tick(5 * time.Second) {
+			fmt.Println("------------------------------------")
+			fmt.Println("Total accounts =", store.Count())
+			server.stats.Sort()
+			fmt.Println(server.stats.Format())
+			printMemUsage()
+		}
+	}()
 
-	// server := NewServer(store, &ServerOptions{
-	// 	Addr: ":" + port,
-	// })
-	// err := server.Handle()
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	err := server.Handle()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func readOptions(filename string, store *Store) {
@@ -73,63 +100,43 @@ func readOptions(filename string, store *Store) {
 		log.Fatal(err)
 	}
 
-	now, err := strconv.ParseUint(strings.TrimSpace(line), 10, 32)
+	ui64, err := strconv.ParseUint(strings.TrimSpace(line), 10, 64)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	store.SetNow(uint32(now))
+	store.SetNow(uint32(ui64))
 }
 
-func readArchive(filename string, store *Store) {
+func readArchive(filename string, parser *Parser, store *Store) {
 	data, err := zip.OpenReader(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer data.Close()
 
-	fmt.Println("Founded files", len(data.File))
+	fmt.Println("Founded files =", len(data.File))
 
 	for _, f := range data.File {
-		fmt.Println("Parse file", f.Name)
+		fmt.Println("parse file " + f.Name)
 
 		reader, err := f.Open()
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		parseFile(reader, store)
-
+		parseFile(reader, parser, store)
 		reader.Close()
 	}
 }
 
-func parseFile(reader io.ReadCloser, store *Store) {
-	// gojay
-	dec := gojay.NewDecoder(reader)
-	err := dec.Object(gojay.DecodeObjectFunc(func(dec *gojay.Decoder, key string) error {
-		switch key {
-		case "accounts":
-			return dec.Array(gojay.DecodeArrayFunc(func(dec *gojay.Decoder) error {
-				// start := time.Now()
-				account := Account{}
-				err := dec.Object(&account)
-				if err != nil {
-					return err
-				}
-				err = store.Add(&account)
-				if err != nil {
-					log.Fatal("Can not add account to store")
-				}
-				// fmt.Println("Account", account.ID, "was parsed for", time.Now().Sub(start))
-				// printMemUsage()
-				return nil
-			}))
-		}
-		return errors.New("Unknown key in accounts file")
-	}))
-
+func parseFile(reader io.ReadCloser, parser *Parser, store *Store) {
+	rawAccounts, err := parser.DecodeAccounts(reader)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Cannot parse file")
+	}
+
+	for _, rawAccount := range rawAccounts {
+		store.Add(rawAccount, false, false)
 	}
 }

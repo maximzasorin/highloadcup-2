@@ -2,62 +2,45 @@ package main
 
 import (
 	"errors"
-	"net/http"
-	"strconv"
-
-	"github.com/francoispqt/gojay"
 )
 
-const (
-	StatusSingleString            = "свободны"
-	StatusComplicatedString       = "всё сложно"
-	StatusRelationshipString      = "заняты"
-	StatusSingle             byte = iota
-	StatusRelationship
-	StatusComplicated
-)
+type Accounts map[uint32]*Account
 
-const (
-	SexFemale = byte('f')
-	SexMale   = byte('m')
-)
-
-type Premium struct {
-	Start  uint32
-	Finish uint32
-}
-
-type Like struct {
-	ID uint32
-	Ts uint32
-}
-
-type Account struct {
-	ID        uint32
-	Sex       byte
-	Status    byte
-	Birth     uint32
-	Joined    uint32
-	Premium   *Premium // optional
-	Fname     *string  // optional
-	Sname     *string  // optional
-	Phone     *string  // optional
-	Country   *string  // optional
-	City      *string  // optional
-	Email     string
-	Interests []string
-	Likes     []Like
-}
+type AccountSlice []*Account
 
 type Store struct {
-	now      uint32
-	test     bool
-	accounts map[uint32]*Account
+	parser         *Parser
+	dicts          *Dicts
+	now            uint32
+	test           bool
+	withPremium    uint32
+	countLikes     uint64
+	accounts       Accounts
+	indexID        *IndexID
+	indexEmail     *IndexEmail
+	indexLikee     *IndexLikee
+	indexInterest  *IndexInterest
+	indexCity      *IndexCity
+	indexBirthYear *IndexYear
+	indexCountry   *IndexCountry
+	indexFname     *IndexFname
+	indexPhoneCode *IndexPhoneCode
 }
 
-func NewStore() *Store {
+func NewStore(parser *Parser, dicts *Dicts) *Store {
 	return &Store{
-		accounts: make(map[uint32]*Account),
+		parser:         parser,
+		dicts:          dicts,
+		accounts:       make(Accounts),
+		indexID:        NewIndexID(),
+		indexEmail:     NewIndexEmail(),
+		indexLikee:     NewIndexLikee(),
+		indexInterest:  NewIndexInterest(),
+		indexCity:      NewIndexCity(),
+		indexBirthYear: NewIndexYear(),
+		indexCountry:   NewIndexCountry(),
+		indexFname:     NewIndexFname(),
+		indexPhoneCode: NewIndexPhoneCode(),
 	}
 }
 
@@ -73,179 +56,236 @@ func (store *Store) Count() uint32 {
 	return uint32(len(store.accounts))
 }
 
-func (store *Store) Add(account *Account) error {
-	if _, ok := store.accounts[account.ID]; ok {
-		return errors.New("Account with same ID already exists")
+func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) (*Account, error) {
+	if check {
+		if rawAccount.Email == "" {
+			return nil, errors.New("Email field should be specified")
+		}
+		if rawAccount.EmailDomain == 0 {
+			return nil, errors.New("Invalid email")
+		}
+		if rawAccount.Sex == 0 {
+			return nil, errors.New("Sex field should be specified")
+		}
+		if rawAccount.Status == 0 {
+			return nil, errors.New("Status field should be specified")
+		}
+		if rawAccount.Birth == 0 {
+			return nil, errors.New("Birth field should be specified")
+		}
+		if rawAccount.Joined == 0 {
+			return nil, errors.New("Joined field should be specified")
+		}
+		// for _, like := range rawAccount.Likes {
+		// 	if _, ok := store.accounts[like.ID]; !ok {
+		// 		return nil, errors.New("Like with unknown account ID")
+		// 	}
+		// }
+		if rawAccount.ID == 0 {
+			return nil, errors.New("Need account ID")
+		}
+		if _, ok := store.accounts[rawAccount.ID]; ok {
+			return nil, errors.New("Account with same ID already exists")
+		}
+		if store.indexEmail.Has(rawAccount.Email) {
+			return nil, errors.New("Same email already taken")
+		}
 	}
 
-	store.accounts[account.ID] = account
+	account := Account{
+		ID:          rawAccount.ID,
+		Sex:         rawAccount.Sex,
+		Status:      rawAccount.Status,
+		Birth:       rawAccount.Birth,
+		Joined:      rawAccount.Joined,
+		Premium:     rawAccount.Premium,
+		Email:       rawAccount.Email,
+		EmailDomain: rawAccount.EmailDomain,
+		// Phone:       rawAccount.Phone,
+		// PhoneCode:   rawAccount.PhoneCode,
+		// Likes:       rawAccount.Likes,
+	}
+
+	if rawAccount.Phone != nil {
+		account.Phone = rawAccount.Phone
+		account.PhoneCode = rawAccount.PhoneCode
+		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
+	} else {
+		store.indexPhoneCode.Add(0, account.ID)
+	}
+
+	if rawAccount.Fname != nil {
+		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
+		store.indexFname.Add(account.Fname, account.ID)
+	} else {
+		store.indexFname.Add(0, account.ID)
+	}
+
+	if rawAccount.Sname != nil {
+		account.Sname = store.dicts.AddSname(*rawAccount.Sname)
+	}
+
+	if rawAccount.Country != nil {
+		account.Country = store.dicts.AddCountry(*rawAccount.Country)
+		store.indexCountry.Add(account.Country, account.ID)
+	} else {
+		store.indexCountry.Add(0, account.ID)
+	}
+
+	if rawAccount.City != nil {
+		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
+		store.indexCity.Add(account.City, account.ID)
+	} else {
+		store.indexCity.Add(0, account.ID)
+	}
+
+	for _, like := range rawAccount.Likes {
+		store.indexLikee.Add(like.ID, account.ID)
+		if updateIndexes {
+			store.indexLikee.Update(like.ID)
+		}
+	}
+
+	for _, interestStr := range rawAccount.Interests {
+		interest := store.dicts.AddInterest(interestStr)
+		account.Interests = append(account.Interests, interest)
+		store.indexInterest.Add(interest, account.ID)
+		if updateIndexes {
+			store.indexInterest.Update(interest)
+		}
+	}
+
+	store.accounts[account.ID] = &account
+	store.indexEmail.Add(account.Email, account.ID)
+
+	store.indexID.Add(account.ID)
+	store.indexBirthYear.Add(timestampToYear(account.Birth), account.ID)
+	if updateIndexes {
+		store.indexID.Update()
+	}
+
+	// if account.Premium != nil {
+	// 	store.withPremium++
+	// }
+
+	// store.countLikes += uint64(len(account.Likes))
+
+	return &account, nil
+}
+
+func (store *Store) AddLikes(rawLikes []*RawLike) error {
+	// if len(rawLikes) == 0 {
+	// 	return errors.New("No likes founded")
+	// }
+
+	for _, rawLike := range rawLikes {
+		if _, ok := store.accounts[rawLike.Likee]; !ok {
+			return errors.New("Cannot find likee account")
+		}
+		if _, ok := store.accounts[rawLike.Liker]; !ok {
+			return errors.New("Cannot find liker account")
+		}
+	}
+
+	for _, rawLike := range rawLikes {
+		store.indexLikee.Add(rawLike.Likee, rawLike.Liker)
+		// store.indexLikee.Update(rawLike.Likee)
+	}
 
 	return nil
+}
+
+func (store *Store) Update(ID uint32, rawAccount *RawAccount) (*Account, error) {
+	if rawAccount.Email != "" && rawAccount.EmailDomain == 0 {
+		return nil, errors.New("Invalid email")
+	}
+	emailID, err := store.indexEmail.Get(rawAccount.Email)
+	if err == nil && emailID != ID {
+		return nil, errors.New("Same email already taken")
+	}
+
+	account := store.Get(ID)
+	if account == nil {
+		return nil, errors.New("Unknwon account for update")
+	}
+	if rawAccount.Sex != 0 {
+		account.Sex = rawAccount.Sex
+	}
+	if rawAccount.Status != 0 {
+		account.Status = rawAccount.Status
+	}
+	if rawAccount.Birth != 0 {
+		account.Birth = rawAccount.Birth
+	}
+	if rawAccount.Joined != 0 {
+		account.Joined = rawAccount.Joined
+	}
+	if rawAccount.Premium != nil {
+		account.Premium = rawAccount.Premium
+	}
+	if rawAccount.Email != "" && account.Email != rawAccount.Email {
+		oldEmail := account.Email
+		account.Email = rawAccount.Email
+		account.EmailDomain = rawAccount.EmailDomain
+		store.indexEmail.Remove(oldEmail)
+		store.indexEmail.Add(account.Email, account.ID)
+	}
+	if rawAccount.Phone != nil {
+		account.Phone = rawAccount.Phone
+		account.PhoneCode = rawAccount.PhoneCode
+	}
+
+	if len(rawAccount.Likes) > 0 {
+		for _, like := range rawAccount.Likes {
+			account.Likes = append(account.Likes, like)
+			store.indexLikee.Add(like.ID, account.ID)
+			// store.indexLikee.Update(like.ID)
+		}
+	}
+	if rawAccount.Fname != nil {
+		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
+	}
+	if rawAccount.Sname != nil {
+		account.Sname = store.dicts.AddSname(*rawAccount.Sname)
+	}
+	if rawAccount.Country != nil {
+		account.Country = store.dicts.AddCountry(*rawAccount.Country)
+	}
+	if rawAccount.City != nil {
+		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
+	}
+	// TODO: may be empty interests list
+	if len(rawAccount.Interests) > 0 {
+		// for _, interest := range account.Interests {
+		// 	store.indexInterest.Remove(interest, ID)
+		// }
+		account.Interests = account.Interests[:0]
+		for _, interestStr := range rawAccount.Interests {
+			interest := store.dicts.AddInterest(interestStr)
+			account.Interests = append(account.Interests, interest)
+			// store.indexInterest.Add(interest, account.ID)
+			// store.indexInterest.Update(interest)
+		}
+	}
+
+	return account, nil
+}
+
+func (store *Store) UpdateIndex() {
+	store.indexID.Update()
+	store.indexLikee.Update(0)
+	store.indexInterest.Update(0)
+	store.indexCity.Update(0)
+	store.indexBirthYear.Update(0)
+	store.indexCountry.Update(0)
+	store.indexFname.Update(0)
+	store.indexPhoneCode.Update(0)
 }
 
 func (store *Store) Get(id uint32) *Account {
 	return store.accounts[id]
 }
 
-func (store *Store) FilterAll(filter *Filter, writer http.ResponseWriter) {
-	// for ID, account := range store.accounts {
-
-	// }
-
-	writer.WriteHeader(http.StatusOK)
-	writer.Write([]byte("{\"accounts\":[]}"))
-}
-
-func (account *Account) UnmarshalJSONObject(dec *gojay.Decoder, key string) error {
-	switch key {
-	case "id":
-		return dec.Uint32(&account.ID)
-	case "sex":
-		var sex string
-		err := readString(dec, &sex, false)
-		if err != nil {
-			return err
-		}
-		if len(sex) != 1 || (sex[0] != SexFemale && sex[0] != SexMale) {
-			return errors.New("Invalid sex value")
-		}
-		account.Sex = sex[0]
-		return nil
-	case "status":
-		var status string
-		err := readString(dec, &status, true)
-		if err != nil {
-			return err
-		}
-		switch status {
-		case StatusSingleString:
-			account.Status = StatusSingle
-		case StatusComplicatedString:
-			account.Status = StatusComplicated
-		case StatusRelationshipString:
-			account.Status = StatusRelationship
-		default:
-			return errors.New("Unknown account status")
-		}
-		return nil
-	case "birth":
-		return dec.Uint32(&account.Birth)
-	case "joined":
-		return dec.Uint32(&account.Joined)
-	case "premium":
-		err := dec.ObjectNull(&account.Premium)
-		if err != nil {
-			return err
-		}
-		return nil
-	case "email":
-		return readString(dec, &account.Email, false)
-	case "phone":
-		return readStringNull(dec, &account.Phone, false)
-	case "fname":
-		return readStringNull(dec, &account.Fname, true)
-	case "sname":
-		return readStringNull(dec, &account.Sname, true)
-	case "country":
-		return readStringNull(dec, &account.Country, true)
-	case "city":
-		return readStringNull(dec, &account.City, true)
-	case "likes":
-		return dec.Array(gojay.DecodeArrayFunc(func(dec *gojay.Decoder) error {
-			like := Like{}
-			err := dec.Object(&like)
-			if err != nil {
-				return err
-			}
-			account.Likes = append(account.Likes, like)
-			return nil
-		}))
-	case "interests":
-		return dec.Array(gojay.DecodeArrayFunc(func(dec *gojay.Decoder) error {
-			var interest string
-			err := readString(dec, &interest, true)
-			if err != nil {
-				return err
-			}
-			account.Interests = append(account.Interests, interest)
-			return nil
-		}))
-	}
-	return errors.New(`Unknown account field "` + key + `"`)
-}
-
-func (account *Account) NKeys() int {
-	return 14
-}
-
-func (premium *Premium) UnmarshalJSONObject(dec *gojay.Decoder, key string) error {
-	switch key {
-	case "start":
-		return dec.Uint32(&premium.Start)
-	case "finish":
-		return dec.Uint32(&premium.Finish)
-	}
-	return errors.New("Unknown premium field")
-}
-
-func (premium *Premium) NKeys() int {
-	return 2
-}
-
-func (like *Like) UnmarshalJSONObject(dec *gojay.Decoder, key string) error {
-	switch key {
-	case "id":
-		return dec.Uint32(&like.ID)
-	case "ts":
-		return dec.Uint32(&like.Ts)
-	}
-	return errors.New("Unknown like field")
-}
-
-func (like *Like) NKeys() int {
-	return 2
-}
-
-func readString(dec *gojay.Decoder, str *string, unquote bool) error {
-	var buf []byte
-	err := dec.EmbeddedJSON((*gojay.EmbeddedJSON)(&buf))
-	if err != nil {
-		return err
-	}
-	if unquote {
-		*str, err = strconv.Unquote(string(buf))
-		if err != nil {
-			return err
-		}
-	} else {
-		s := string(buf)
-		*str = s[1 : len(s)-1]
-	}
-
-	return nil
-}
-
-func readStringNull(dec *gojay.Decoder, str **string, unquote bool) error {
-	var buf []byte
-	err := dec.EmbeddedJSON((*gojay.EmbeddedJSON)(&buf))
-	if err != nil {
-		return err
-	}
-	if buf[0] == 'n' {
-		*str = nil
-		return nil
-	}
-	// if unquote {
-	s, err := strconv.Unquote(string(buf))
-	*str = &s
-	if err != nil {
-		return err
-	}
-	// } else {
-	// 	s := string(buf)
-	// 	unq := s[1 : len(s)-1]
-	// 	*str = &unq
-	// }
-
-	return nil
+func (store *Store) GetAll() *Accounts {
+	return &store.accounts
 }

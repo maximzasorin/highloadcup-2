@@ -7,9 +7,6 @@ services:
       - "3000:80"
     volumes:
      - ~/highload/testing/data:/tmp/data
-    environment:
-      DATASET: "/tmp/data"
-      PORT: 80
   full:
     build: .
     image: maximzasorin/highloadcup-2
@@ -17,6 +14,3 @@ services:
       - "3000:80"
     volumes:
      - ~/highload/full/data:/tmp/data
-    environment:
-      DATASET: "/tmp/data"
-      PORT: 80
