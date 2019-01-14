@@ -19,15 +19,39 @@ type Premium struct {
 	Finish uint32
 }
 
-type Like struct {
-	ID uint32
+type AccountLike struct {
+	ID ID
 	Ts uint32
 }
 
-type RawLike struct {
+type Account struct {
+	ID          ID
+	Sex         byte
+	Status      byte
+	Sname       Sname   // optional
+	Fname       Fname   // optional
+	Country     Country // optional
+	City        City    // optional
+	EmailDomain uint8
+	Birth       int64
+	Joined      uint32
+	PhoneCode   *uint16 // optional
+	Phone       *string // optional
+	Email       string
+	Premium     *Premium // optional
+	Interests   []Interest
+	Likes       []AccountLike
+}
+
+type Like struct {
 	Likee uint32
 	Ts    uint32
 	Liker uint32
+}
+
+type RawLike struct {
+	ID uint32
+	Ts uint32
 }
 
 type RawAccount struct {
@@ -46,24 +70,5 @@ type RawAccount struct {
 	Email       string
 	Premium     *Premium // optional
 	Interests   []string
-	Likes       []Like
-}
-
-type Account struct {
-	ID          uint32
-	Sex         byte
-	Status      byte
-	Sname       Sname   // optional
-	Fname       Fname   // optional
-	Country     Country // optional
-	City        City    // optional
-	EmailDomain uint8
-	Birth       int64
-	Joined      uint32
-	PhoneCode   *uint16 // optional
-	Phone       *string // optional
-	Email       string
-	Premium     *Premium // optional
-	Interests   []Interest
-	Likes       []Like
+	Likes       []RawLike
 }

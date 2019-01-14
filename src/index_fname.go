@@ -1,57 +1,91 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexFname struct {
-	fnames map[Fname]IDS
+	rwLock sync.RWMutex
+	fnames map[Fname]*IndexID
 }
 
 func NewIndexFname() *IndexFname {
 	return &IndexFname{
-		fnames: make(map[Fname]IDS),
+		fnames: make(map[Fname]*IndexID),
 	}
 }
 
-func (indexFname *IndexFname) Add(fname Fname, ID uint32) {
-	_, ok := indexFname.fnames[fname]
+func (index *IndexFname) Add(fname Fname, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.fnames[fname]
 	if !ok {
-		indexFname.fnames[fname] = make(IDS, 1)
-		indexFname.fnames[fname][0] = ID
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.fnames[fname] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.fnames[fname].Add(id)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexFname.fnames[fname] = append(indexFname.fnames[fname], ID)
+	index.fnames[fname].Add(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexFname *IndexFname) Remove(fname Fname, ID uint32) {
-	_, ok := indexFname.fnames[fname]
+func (index *IndexFname) Append(fname Fname, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.fnames[fname]
 	if !ok {
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.fnames[fname] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.fnames[fname].Append(id)
+		index.rwLock.RUnlock()
 		return
 	}
-	for i, accountID := range indexFname.fnames[fname] {
-		if accountID == ID {
-			indexFname.fnames[fname] = append(indexFname.fnames[fname][:i], indexFname.fnames[fname][i+1:]...)
-			return
-		}
-	}
+	index.fnames[fname].Append(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexFname *IndexFname) Update(fname Fname) {
-	if fname == 0 {
-		for fname := range indexFname.fnames {
-			sort.Sort(indexFname.fnames[fname])
-		}
+func (index *IndexFname) Update(fname Fname) {
+	index.rwLock.Lock()
+	_, ok := index.fnames[fname]
+	if !ok {
+		index.rwLock.Unlock()
 		return
 	}
-
-	if _, ok := indexFname.fnames[fname]; ok {
-		sort.Sort(indexFname.fnames[fname])
-	}
+	index.fnames[fname].Update()
+	index.rwLock.Unlock()
 }
 
-func (indexFname *IndexFname) Get(fname Fname) IDS {
-	if _, ok := indexFname.fnames[fname]; ok {
-		return indexFname.fnames[fname]
+func (index *IndexFname) UpdateAll() {
+	index.rwLock.Lock()
+	for fname := range index.fnames {
+		index.fnames[fname].Update()
 	}
+	index.rwLock.Unlock()
+}
+
+func (index *IndexFname) Remove(fname Fname, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.fnames[fname]
+	if !ok {
+		index.rwLock.RUnlock()
+		return
+	}
+	index.fnames[fname].Remove(id)
+	index.rwLock.RUnlock()
+}
+
+func (index *IndexFname) Find(fname Fname) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.fnames[fname]; ok {
+		ids := index.fnames[fname].FindAll()
+		index.rwLock.RUnlock()
+		return ids
+	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }

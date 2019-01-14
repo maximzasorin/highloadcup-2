@@ -2,22 +2,21 @@ package main
 
 import (
 	"errors"
+	"sync"
 )
 
-type Accounts map[uint32]*Account
-
-type AccountSlice []*Account
-
 type Store struct {
-	parser         *Parser
-	dicts          *Dicts
-	now            uint32
-	test           bool
-	withPremium    uint32
-	countLikes     uint64
-	accounts       Accounts
-	indexID        *IndexID
-	indexEmail     *IndexEmail
+	parser      *Parser
+	dicts       *Dicts
+	now         uint32
+	test        bool
+	withPremium uint32
+	countLikes  uint64
+	accounts    map[ID]*Account
+	emails      map[string]ID
+	rwLock      sync.RWMutex
+	indexID     *IndexID
+	// indexBtree     *IndexBtree
 	indexLikee     *IndexLikee
 	indexInterest  *IndexInterest
 	indexCity      *IndexCity
@@ -29,11 +28,12 @@ type Store struct {
 
 func NewStore(parser *Parser, dicts *Dicts) *Store {
 	return &Store{
-		parser:         parser,
-		dicts:          dicts,
-		accounts:       make(Accounts),
-		indexID:        NewIndexID(),
-		indexEmail:     NewIndexEmail(),
+		parser:   parser,
+		dicts:    dicts,
+		accounts: make(map[ID]*Account),
+		emails:   make(map[string]ID),
+		indexID:  NewIndexID(10000),
+		// indexBtree:     NewIndexBtree(50),
 		indexLikee:     NewIndexLikee(),
 		indexInterest:  NewIndexInterest(),
 		indexCity:      NewIndexCity(),
@@ -84,16 +84,10 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 		if rawAccount.ID == 0 {
 			return nil, errors.New("Need account ID")
 		}
-		if _, ok := store.accounts[rawAccount.ID]; ok {
-			return nil, errors.New("Account with same ID already exists")
-		}
-		if store.indexEmail.Has(rawAccount.Email) {
-			return nil, errors.New("Same email already taken")
-		}
 	}
 
 	account := Account{
-		ID:          rawAccount.ID,
+		ID:          ID(rawAccount.ID),
 		Sex:         rawAccount.Sex,
 		Status:      rawAccount.Status,
 		Birth:       rawAccount.Birth,
@@ -101,24 +95,30 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 		Premium:     rawAccount.Premium,
 		Email:       rawAccount.Email,
 		EmailDomain: rawAccount.EmailDomain,
-		// Phone:       rawAccount.Phone,
-		// PhoneCode:   rawAccount.PhoneCode,
-		// Likes:       rawAccount.Likes,
 	}
+
+	store.rwLock.Lock()
+	if check {
+		if _, ok := store.emails[account.Email]; ok {
+			store.rwLock.Unlock()
+			return nil, errors.New("Same email already taken")
+		}
+		if _, ok := store.accounts[account.ID]; ok {
+			store.rwLock.Unlock()
+			return nil, errors.New("Account with same ID already exists")
+		}
+	}
+	store.accounts[account.ID] = &account
+	store.emails[account.Email] = account.ID
+	store.rwLock.Unlock()
 
 	if rawAccount.Phone != nil {
 		account.Phone = rawAccount.Phone
 		account.PhoneCode = rawAccount.PhoneCode
-		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
-	} else {
-		store.indexPhoneCode.Add(0, account.ID)
 	}
 
 	if rawAccount.Fname != nil {
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
-		store.indexFname.Add(account.Fname, account.ID)
-	} else {
-		store.indexFname.Add(0, account.ID)
 	}
 
 	if rawAccount.Sname != nil {
@@ -127,85 +127,122 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 
 	if rawAccount.Country != nil {
 		account.Country = store.dicts.AddCountry(*rawAccount.Country)
-		store.indexCountry.Add(account.Country, account.ID)
-	} else {
-		store.indexCountry.Add(0, account.ID)
 	}
 
 	if rawAccount.City != nil {
 		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
-		store.indexCity.Add(account.City, account.ID)
-	} else {
-		store.indexCity.Add(0, account.ID)
 	}
 
 	for _, like := range rawAccount.Likes {
-		store.indexLikee.Add(like.ID, account.ID)
-		if updateIndexes {
-			store.indexLikee.Update(like.ID)
-		}
+		store.indexLikee.Add(ID(like.ID), ID(account.ID))
 	}
 
 	for _, interestStr := range rawAccount.Interests {
 		interest := store.dicts.AddInterest(interestStr)
 		account.Interests = append(account.Interests, interest)
-		store.indexInterest.Add(interest, account.ID)
-		if updateIndexes {
-			store.indexInterest.Update(interest)
-		}
 	}
 
-	store.accounts[account.ID] = &account
-	store.indexEmail.Add(account.Email, account.ID)
-
-	store.indexID.Add(account.ID)
-	store.indexBirthYear.Add(timestampToYear(account.Birth), account.ID)
 	if updateIndexes {
-		store.indexID.Update()
+		store.AddToIndex(&account)
 	}
-
-	// if account.Premium != nil {
-	// 	store.withPremium++
-	// }
-
-	// store.countLikes += uint64(len(account.Likes))
 
 	return &account, nil
 }
 
-func (store *Store) AddLikes(rawLikes []*RawLike) error {
+func (store *Store) AddToIndex(account *Account) {
+	store.indexID.Add(account.ID)
+	store.indexBirthYear.Add(timestampToYear(account.Birth), account.ID)
+	if account.Phone != nil {
+		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
+	} else {
+		store.indexPhoneCode.Add(0, account.ID)
+	}
+	if account.Fname != 0 {
+		store.indexFname.Add(account.Fname, account.ID)
+	} else {
+		store.indexFname.Add(0, account.ID)
+	}
+	if account.Country != 0 {
+		store.indexCountry.Add(account.Country, account.ID)
+	} else {
+		store.indexCountry.Add(0, account.ID)
+	}
+	if account.City != 0 {
+		store.indexCity.Add(account.City, account.ID)
+	} else {
+		store.indexCity.Add(0, account.ID)
+	}
+	for _, interest := range account.Interests {
+		store.indexInterest.Add(interest, account.ID)
+	}
+}
+
+func (store *Store) AppendToIndex(account *Account) {
+	store.indexID.Append(account.ID)
+	store.indexBirthYear.Append(timestampToYear(account.Birth), account.ID)
+	store.indexFname.Append(account.Fname, account.ID)
+	store.indexCountry.Append(account.Country, account.ID)
+	store.indexCity.Append(account.City, account.ID)
+	if account.Phone != nil {
+		store.indexPhoneCode.Append(*account.PhoneCode, account.ID)
+	} else {
+		store.indexPhoneCode.Append(0, account.ID)
+	}
+	for _, interest := range account.Interests {
+		store.indexInterest.Append(interest, account.ID)
+	}
+}
+
+func (store *Store) UpdateIndex() {
+	store.indexID.Update()
+	store.indexBirthYear.UpdateAll()
+	store.indexFname.UpdateAll()
+	store.indexCountry.UpdateAll()
+	store.indexCity.UpdateAll()
+	store.indexPhoneCode.UpdateAll()
+	store.indexInterest.UpdateAll()
+}
+
+func (store *Store) AddLikes(rawLikes []*Like, updateIndexes bool) error {
 	// if len(rawLikes) == 0 {
 	// 	return errors.New("No likes founded")
 	// }
 
 	for _, rawLike := range rawLikes {
-		if _, ok := store.accounts[rawLike.Likee]; !ok {
+		store.rwLock.RLock()
+		_, ok := store.accounts[ID(rawLike.Likee)]
+		store.rwLock.RUnlock()
+		if !ok {
 			return errors.New("Cannot find likee account")
 		}
-		if _, ok := store.accounts[rawLike.Liker]; !ok {
+		store.rwLock.RLock()
+		_, ok = store.accounts[ID(rawLike.Liker)]
+		store.rwLock.RUnlock()
+		if !ok {
 			return errors.New("Cannot find liker account")
 		}
 	}
 
 	for _, rawLike := range rawLikes {
-		store.indexLikee.Add(rawLike.Likee, rawLike.Liker)
-		// store.indexLikee.Update(rawLike.Likee)
+		store.indexLikee.Add(ID(rawLike.Likee), ID(rawLike.Liker))
 	}
 
 	return nil
 }
 
-func (store *Store) Update(ID uint32, rawAccount *RawAccount) (*Account, error) {
+func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*Account, error) {
 	if rawAccount.Email != "" && rawAccount.EmailDomain == 0 {
 		return nil, errors.New("Invalid email")
 	}
-	emailID, err := store.indexEmail.Get(rawAccount.Email)
-	if err == nil && emailID != ID {
+	store.rwLock.RLock()
+	emailID, ok := store.emails[rawAccount.Email]
+	if ok && emailID != id {
+		store.rwLock.RUnlock()
 		return nil, errors.New("Same email already taken")
 	}
-
-	account := store.Get(ID)
-	if account == nil {
+	account, ok := store.accounts[id]
+	store.rwLock.RUnlock()
+	if !ok {
 		return nil, errors.New("Unknwon account for update")
 	}
 	if rawAccount.Sex != 0 {
@@ -214,8 +251,12 @@ func (store *Store) Update(ID uint32, rawAccount *RawAccount) (*Account, error) 
 	if rawAccount.Status != 0 {
 		account.Status = rawAccount.Status
 	}
-	if rawAccount.Birth != 0 {
+	if rawAccount.Birth != 0 && account.Birth != rawAccount.Birth {
+		oldBirth := rawAccount.Birth
 		account.Birth = rawAccount.Birth
+		store.indexBirthYear.Remove(timestampToYear(oldBirth), ID(account.ID))
+		newYear := timestampToYear(account.Birth)
+		store.indexBirthYear.Add(newYear, ID(account.ID))
 	}
 	if rawAccount.Joined != 0 {
 		account.Joined = rawAccount.Joined
@@ -227,65 +268,69 @@ func (store *Store) Update(ID uint32, rawAccount *RawAccount) (*Account, error) 
 		oldEmail := account.Email
 		account.Email = rawAccount.Email
 		account.EmailDomain = rawAccount.EmailDomain
-		store.indexEmail.Remove(oldEmail)
-		store.indexEmail.Add(account.Email, account.ID)
+		store.rwLock.Lock()
+		delete(store.emails, oldEmail)
+		store.emails[account.Email] = account.ID
+		store.rwLock.Unlock()
 	}
-	if rawAccount.Phone != nil {
+	if rawAccount.Phone != nil && (account.Phone == nil || *account.Phone != *rawAccount.Phone) {
 		account.Phone = rawAccount.Phone
+		if account.PhoneCode != nil {
+			store.indexPhoneCode.Remove(*account.PhoneCode, account.ID)
+		}
 		account.PhoneCode = rawAccount.PhoneCode
+		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
 	}
-
 	if len(rawAccount.Likes) > 0 {
 		for _, like := range rawAccount.Likes {
-			account.Likes = append(account.Likes, like)
-			store.indexLikee.Add(like.ID, account.ID)
-			// store.indexLikee.Update(like.ID)
+			store.indexLikee.Add(ID(like.ID), account.ID)
 		}
 	}
 	if rawAccount.Fname != nil {
+		oldFname := account.Fname
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
+		store.indexFname.Remove(oldFname, account.ID)
+		store.indexFname.Add(account.Fname, account.ID)
 	}
 	if rawAccount.Sname != nil {
 		account.Sname = store.dicts.AddSname(*rawAccount.Sname)
 	}
 	if rawAccount.Country != nil {
+		oldCountry := account.Country
 		account.Country = store.dicts.AddCountry(*rawAccount.Country)
+		store.indexCountry.Remove(oldCountry, ID(account.ID))
+		store.indexCountry.Add(account.Country, ID(account.ID))
 	}
 	if rawAccount.City != nil {
+		oldCity := account.City
 		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
+		store.indexCity.Remove(oldCity, account.ID)
+		store.indexCity.Add(account.City, account.ID)
 	}
 	// TODO: may be empty interests list
 	if len(rawAccount.Interests) > 0 {
-		// for _, interest := range account.Interests {
-		// 	store.indexInterest.Remove(interest, ID)
-		// }
+		for _, interest := range account.Interests {
+			account.Interests = account.Interests[:0]
+			store.indexInterest.Remove(interest, account.ID)
+		}
 		account.Interests = account.Interests[:0]
 		for _, interestStr := range rawAccount.Interests {
 			interest := store.dicts.AddInterest(interestStr)
 			account.Interests = append(account.Interests, interest)
-			// store.indexInterest.Add(interest, account.ID)
-			// store.indexInterest.Update(interest)
+			store.indexInterest.Add(interest, account.ID)
 		}
 	}
 
 	return account, nil
 }
 
-func (store *Store) UpdateIndex() {
-	store.indexID.Update()
-	store.indexLikee.Update(0)
-	store.indexInterest.Update(0)
-	store.indexCity.Update(0)
-	store.indexBirthYear.Update(0)
-	store.indexCountry.Update(0)
-	store.indexFname.Update(0)
-	store.indexPhoneCode.Update(0)
+func (store *Store) Get(id ID) (*Account, bool) {
+	store.rwLock.RLock()
+	account, ok := store.accounts[id]
+	store.rwLock.RUnlock()
+	return account, ok
 }
 
-func (store *Store) Get(id uint32) *Account {
-	return store.accounts[id]
-}
-
-func (store *Store) GetAll() *Accounts {
+func (store *Store) GetAll() *map[ID]*Account {
 	return &store.accounts
 }

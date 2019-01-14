@@ -11,8 +11,8 @@ func (store *Store) GroupAll(group *Group) *Aggregation {
 	}
 
 	// scan all
-	for _, ID := range store.indexID.FindAll() {
-		account := store.accounts[ID]
+	for _, id := range store.indexID.FindAll() {
+		account := store.accounts[id]
 
 		if !filter.NoFilter {
 			if filter.Sex != nil {
@@ -75,7 +75,7 @@ func (store *Store) GroupAll(group *Group) *Aggregation {
 				}
 				exists := false
 				for _, like := range account.Likes {
-					if like.ID == *filter.Likes {
+					if like.ID == ID(*filter.Likes) {
 						exists = true
 						break
 					}

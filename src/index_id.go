@@ -1,42 +1,68 @@
 package main
 
-import "sort"
+import (
+	"sort"
+	"sync"
+)
 
-type IDS []uint32
+type ID uint32
+
+type IDS []ID
 
 type IndexID struct {
-	ids IDS
+	ids    IDS
+	rwLock sync.RWMutex
 }
 
-func NewIndexID() *IndexID {
+func NewIndexID(N int) *IndexID {
 	return &IndexID{
-		ids: make([]uint32, 0, 10000),
+		ids: make(IDS, 0, N),
 	}
 }
 
-func (indexID *IndexID) FindAll() IDS {
-	return indexID.ids
+func (index *IndexID) FindAll() IDS {
+	return index.ids
 }
 
-func (indexID *IndexID) Update() {
-	// if !sort.IsSorted(indexID.ids) {
-	sort.Sort(indexID.ids)
-	// }
-}
-
-func (indexID *IndexID) Add(ID uint32) {
-	indexID.ids = append(indexID.ids, ID)
-}
-
-func (indexID *IndexID) Remove(ID uint32) {
-	n := len(indexID.ids)
+func (index *IndexID) Add(id ID) {
+	index.rwLock.Lock()
+	n := len(index.ids)
 	i := sort.Search(n, func(i int) bool {
-		return indexID.ids[i] == ID
+		return index.ids[i] <= id
 	})
-
-	if i != n {
-		indexID.ids = append(indexID.ids[:i], indexID.ids[i+1:]...)
+	if i < n && index.ids[i] == id {
+		index.rwLock.Unlock()
+		return
 	}
+	// index.ids = append(index.ids[:i], append(IDS{id}, index.ids[i:]...)...)
+	index.ids = append(index.ids, 0 /* use the zero value of the element type */)
+	copy(index.ids[i+1:], index.ids[i:])
+	index.ids[i] = id
+	index.rwLock.Unlock()
+}
+
+func (index *IndexID) Append(id ID) {
+	index.rwLock.Lock()
+	index.ids = append(index.ids, id)
+	index.rwLock.Unlock()
+}
+
+func (index *IndexID) Update() {
+	index.rwLock.Lock()
+	sort.Sort(index.ids)
+	index.rwLock.Unlock()
+}
+
+func (index *IndexID) Remove(id ID) {
+	index.rwLock.Lock()
+	n := len(index.ids)
+	i := sort.Search(n, func(i int) bool {
+		return index.ids[i] <= id
+	})
+	if i < n && index.ids[i] == id {
+		index.ids = append(index.ids[:i], index.ids[i+1:]...)
+	}
+	index.rwLock.Unlock()
 }
 
 func (ids IDS) Len() int           { return len(ids) }

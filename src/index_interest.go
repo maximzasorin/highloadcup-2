@@ -1,57 +1,91 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexInterest struct {
-	interests map[Interest]IDS
+	rwLock    sync.RWMutex
+	interests map[Interest]*IndexID
 }
 
 func NewIndexInterest() *IndexInterest {
 	return &IndexInterest{
-		interests: make(map[Interest]IDS),
+		interests: make(map[Interest]*IndexID),
 	}
 }
 
-func (indexInterest *IndexInterest) Add(interest Interest, ID uint32) {
-	_, ok := indexInterest.interests[interest]
+func (index *IndexInterest) Add(interest Interest, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.interests[interest]
 	if !ok {
-		indexInterest.interests[interest] = make([]uint32, 1)
-		indexInterest.interests[interest][0] = ID
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.interests[interest] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.interests[interest].Add(id)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexInterest.interests[interest] = append(indexInterest.interests[interest], ID)
+	index.interests[interest].Add(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexInterest *IndexInterest) Remove(interest Interest, ID uint32) {
-	_, ok := indexInterest.interests[interest]
+func (index *IndexInterest) Append(interest Interest, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.interests[interest]
 	if !ok {
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.interests[interest] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.interests[interest].Append(id)
+		index.rwLock.RUnlock()
 		return
 	}
-	for i, accountID := range indexInterest.interests[interest] {
-		if accountID == ID {
-			indexInterest.interests[interest] = append(indexInterest.interests[interest][:i], indexInterest.interests[interest][i+1:]...)
-			return
-		}
-	}
+	index.interests[interest].Append(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexInterest *IndexInterest) Update(interest Interest) {
-	if interest == 0 {
-		for interest := range indexInterest.interests {
-			sort.Sort(indexInterest.interests[interest])
-		}
+func (index *IndexInterest) Update(interest Interest) {
+	index.rwLock.Lock()
+	_, ok := index.interests[interest]
+	if !ok {
+		index.rwLock.Unlock()
 		return
 	}
-
-	if _, ok := indexInterest.interests[interest]; ok {
-		sort.Sort(indexInterest.interests[interest])
-	}
+	index.interests[interest].Update()
+	index.rwLock.Unlock()
 }
 
-func (indexInterest *IndexInterest) Get(interest Interest) IDS {
-	if _, ok := indexInterest.interests[interest]; ok {
-		return indexInterest.interests[interest]
+func (index *IndexInterest) UpdateAll() {
+	index.rwLock.Lock()
+	for interest := range index.interests {
+		index.interests[interest].Update()
 	}
+	index.rwLock.Unlock()
+}
+
+func (index *IndexInterest) Remove(interest Interest, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.interests[interest]
+	if !ok {
+		index.rwLock.RUnlock()
+		return
+	}
+	index.interests[interest].Remove(id)
+	index.rwLock.RUnlock()
+}
+
+func (index *IndexInterest) Find(interest Interest) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.interests[interest]; ok {
+		ids := index.interests[interest].FindAll()
+		index.rwLock.RUnlock()
+		return ids
+	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }

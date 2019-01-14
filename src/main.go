@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "net/http/pprof"
+
+	"github.com/pkg/errors"
 )
 
 func main() {
@@ -38,8 +40,23 @@ func main() {
 
 	fmt.Println("Total accounts found =", store.Count(), "in", time.Now().Sub(startTime).Round(time.Millisecond))
 
-	fmt.Println("Update indexes")
+	fmt.Println("Create indexes")
+	startIndex := time.Now()
+	j := 1
+	for _, account := range *store.GetAll() {
+		store.AppendToIndex(account)
+		if j%10000 == 0 {
+			fmt.Println(j)
+		}
+		j++
+	}
 	store.UpdateIndex()
+	fmt.Println("Index created in", time.Now().Sub(startIndex).Round(time.Millisecond))
+
+	// fmt.Println("Update indexes")
+	// startIndex := time.Now()
+	// store.UpdateIndex()
+	// fmt.Println("Undex updated in", time.Now().Sub(startIndex).Round(time.Millisecond))
 
 	// fmt.Println("Update country cities")
 	// dicts.UpdateCountryCities(store)
@@ -47,6 +64,7 @@ func main() {
 	fmt.Println("Read options")
 	readOptions(*dataset+"/options.txt", store)
 
+	fmt.Println("GOMAXPROCS =", runtime.GOMAXPROCS(-1))
 	fmt.Println("Run GC...")
 	runtime.GC()
 
@@ -137,6 +155,9 @@ func parseFile(reader io.ReadCloser, parser *Parser, store *Store) {
 	}
 
 	for _, rawAccount := range rawAccounts {
-		store.Add(rawAccount, false, false)
+		_, err := store.Add(rawAccount, false, false)
+		if err != nil {
+			log.Fatal(errors.Wrap(err, "Can not add account"))
+		}
 	}
 }

@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-func (store *Store) FilterAll(filter *Filter) AccountSlice {
-	accounts := make(AccountSlice, 0, 50)
+func (store *Store) FilterAll(filter *Filter) []*Account {
+	accounts := make([]*Account, 0, 50)
 
 	if filter.ExpectEmpty {
 		return accounts
@@ -37,14 +37,14 @@ func (store *Store) findIds(filter *Filter) IDS {
 
 	if fields.LikesContains != nil {
 		if len(*fields.LikesContains) == 1 {
-			interest := (*fields.LikesContains)[0]
+			likee := (*fields.LikesContains)[0]
 			fields.LikesContains = nil
-			return store.indexLikee.Get(interest)
+			return store.indexLikee.Find(ID(likee))
 		}
 
 		likersAll := make([]IDS, len(*fields.LikesContains))
 		for i, likeeContains := range *fields.LikesContains {
-			likersAll[i] = store.indexLikee.Get(likeeContains)
+			likersAll[i] = store.indexLikee.Find(ID(likeeContains))
 		}
 
 		likers := make(IDS, 0)
@@ -76,31 +76,31 @@ func (store *Store) findIds(filter *Filter) IDS {
 	if fields.CityEq != nil {
 		city := *fields.CityEq
 		fields.CityEq = nil
-		return store.indexCity.Get(city)
+		return store.indexCity.Find(city)
 	}
 
 	if fields.BirthYear != nil {
 		birthYear := *fields.BirthYear
 		fields.BirthYear = nil
-		return store.indexBirthYear.Get(birthYear)
+		return store.indexBirthYear.Find(birthYear)
 	}
 
 	if fields.PhoneCode != nil {
 		phoneCode := *fields.PhoneCode
 		fields.PhoneCode = nil
-		return store.indexPhoneCode.Get(phoneCode)
+		return store.indexPhoneCode.Find(phoneCode)
 	}
 
 	if fields.InterestsContains != nil {
 		if len(*fields.InterestsContains) == 1 {
 			interest := (*fields.InterestsContains)[0]
 			fields.InterestsContains = nil
-			return store.indexInterest.Get(interest)
+			return store.indexInterest.Find(interest)
 		}
 
 		interestsAll := make([]IDS, len(*fields.InterestsContains))
 		for i, interestContains := range *fields.InterestsContains {
-			interestsAll[i] = store.indexInterest.Get(interestContains)
+			interestsAll[i] = store.indexInterest.Find(interestContains)
 		}
 
 		ids := make(IDS, 0)
@@ -138,12 +138,12 @@ func (store *Store) findIds(filter *Filter) IDS {
 
 		citiesAny := make([]IDS, len(*fields.CityAny))
 		for i, cityAny := range *fields.CityAny {
-			citiesAny[i] = store.indexCity.Get(cityAny)
+			citiesAny[i] = store.indexCity.Find(cityAny)
 		}
 
 		ids := make(IDS, 0)
 		for {
-			maxID := uint32(0)
+			maxID := ID(0)
 			maxCity := -1
 			for i, cityCur := range citiesCur {
 				if cityCur < uint32(len(citiesAny[i])) && citiesAny[i][cityCur] > maxID {
@@ -168,12 +168,12 @@ func (store *Store) findIds(filter *Filter) IDS {
 
 		fnamesAny := make([]IDS, len(*fields.FnameAny))
 		for i, fnameAny := range *fields.FnameAny {
-			fnamesAny[i] = store.indexFname.Get(fnameAny)
+			fnamesAny[i] = store.indexFname.Find(fnameAny)
 		}
 
 		ids := make(IDS, 0)
 		for {
-			maxID := uint32(0)
+			maxID := ID(0)
 			maxFname := -1
 			for i, fnameCur := range fnamesCur {
 				if fnameCur < uint32(len(fnamesAny[i])) && fnamesAny[i][fnameCur] > maxID {
@@ -196,20 +196,20 @@ func (store *Store) findIds(filter *Filter) IDS {
 	if fields.CityNull != nil {
 		if *fields.CityNull {
 			fields.CityNull = nil
-			return store.indexCity.Get(0)
+			return store.indexCity.Find(0)
 		}
 	}
 
 	if fields.CountryEq != nil {
 		country := *fields.CountryEq
 		fields.CountryEq = nil
-		return store.indexCountry.Get(country)
+		return store.indexCountry.Find(country)
 	}
 
 	if fields.CountryNull != nil {
 		if *fields.CountryNull {
 			fields.CountryNull = nil
-			return store.indexCountry.Get(0)
+			return store.indexCountry.Find(0)
 		}
 	}
 
@@ -479,7 +479,7 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 		for _, likeID := range *fields.LikesContains {
 			containsLike := false
 			for _, like := range account.Likes {
-				if like.ID == likeID {
+				if like.ID == ID(likeID) {
 					containsLike = true
 					break
 				}

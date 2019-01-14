@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,7 +40,7 @@ func (server *Server) GetStats() *ServerStats {
 
 func (server *Server) Handle() error {
 	handleRouteGet("/accounts/filter/", func(writer http.ResponseWriter, request *http.Request) {
-		// startTime := time.Now()
+		startTime := time.Now()
 
 		filter := NewFilter(server.parser, server.dicts)
 		err := filter.Parse(request.URL.RawQuery)
@@ -56,10 +57,12 @@ func (server *Server) Handle() error {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write(encoded)
 
-		// server.stats.Add(request, time.Now().Sub(startTime))
+		server.stats.Add(ServerStatsGetFilter, request, time.Now().Sub(startTime))
 	})
 
 	// handleRouteGet("/accounts/group/", func(writer http.ResponseWriter, request *http.Request) {
+	// 	startTime := time.Now()
+
 	// 	group := NewGroup(server.parser, server.dicts)
 	// 	err := group.Parse(request.URL.RawQuery)
 	// 	if err != nil {
@@ -68,67 +71,71 @@ func (server *Server) Handle() error {
 	// 		return
 	// 	}
 
-	// 	// server.stats.Add(request)
-
-	// 	writer.WriteHeader(http.StatusOK)
-	// 	writer.Write([]byte(`{"accounts":[]}`))
-
-	// 	// aggregation := server.store.GroupAll(group)
-	// 	// encoded := server.parser.EncodeAggregation(aggregation)
-
-	// 	// writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
 	// 	// writer.WriteHeader(http.StatusOK)
-	// 	// writer.Write(encoded)
+	// 	// writer.Write([]byte(`{"accounts":[]}`))
+
+	// 	aggregation := server.store.GroupAll(group)
+	// 	encoded := server.parser.EncodeAggregation(aggregation)
+
+	// 	writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+	// 	writer.WriteHeader(http.StatusOK)
+	// 	writer.Write(encoded)
+
+	// 	server.stats.Add(ServerStatsGetGroup, request, time.Now().Sub(startTime))
 	// })
 
-	// handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
-	// 	// server.stats.Add(request)
+	handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
+		startTime := time.Now()
 
-	// 	rawAccount, err := server.parser.DecodeAccount(request.Body, false)
-	// 	if err != nil {
-	// 		writer.WriteHeader(http.StatusBadRequest)
-	// 		return
-	// 	}
+		rawAccount, err := server.parser.DecodeAccount(request.Body, false)
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
-	// 	_, err = server.store.Add(rawAccount, true, false)
-	// 	if err != nil {
-	// 		writer.WriteHeader(http.StatusBadRequest)
-	// 		return
-	// 	}
+		_, err = server.store.Add(rawAccount, true, true)
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
-	// 	writer.WriteHeader(http.StatusCreated)
-	// 	writer.Write([]byte(`{}`))
-	// })
+		writer.WriteHeader(http.StatusCreated)
+		writer.Write([]byte(`{}`))
 
-	// handleRoutePost("/accounts/likes/", func(writer http.ResponseWriter, request *http.Request) {
-	// 	// server.stats.Add(request)
+		server.stats.Add(ServerStatsPostNew, request, time.Now().Sub(startTime))
+	})
 
-	// 	rawLikes, err := server.parser.DecodeLikes(request.Body)
-	// 	if err != nil {
-	// 		writer.WriteHeader(http.StatusBadRequest)
-	// 		return
-	// 	}
+	handleRoutePost("/accounts/likes/", func(writer http.ResponseWriter, request *http.Request) {
+		startTime := time.Now()
 
-	// 	err = server.store.AddLikes(rawLikes)
-	// 	if err != nil {
-	// 		writer.WriteHeader(http.StatusBadRequest)
-	// 		return
-	// 	}
+		rawLikes, err := server.parser.DecodeLikes(request.Body)
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
-	// 	writer.WriteHeader(http.StatusAccepted)
-	// 	writer.Write([]byte(`{}`))
-	// })
+		err = server.store.AddLikes(rawLikes, true)
+		if err != nil {
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		writer.WriteHeader(http.StatusAccepted)
+		writer.Write([]byte(`{}`))
+
+		server.stats.Add(ServerStatsPostLikes, request, time.Now().Sub(startTime))
+	})
 
 	// recommendRegexp := regexp.MustCompile("^/accounts/([0-9]+)/recommend/$")
 	// suggestRegexp := regexp.MustCompile("^/accounts/([0-9]+)/suggest/$")
-	// updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
+	updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
 
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		// recommendMatches := recommendRegexp.FindStringSubmatch(request.URL.Path)
 		// suggestMatches := suggestRegexp.FindStringSubmatch(request.URL.Path)
-		// updateMatches := updateRegex.FindStringSubmatch(request.URL.Path)
+		updateMatches := updateRegex.FindStringSubmatch(request.URL.Path)
 
-		// switch {
+		switch {
 		// case len(recommendMatches) > 0:
 		// 	if request.Method != http.MethodGet {
 		// 		writer.WriteHeader(http.StatusMethodNotAllowed)
@@ -173,42 +180,45 @@ func (server *Server) Handle() error {
 		// 	writer.WriteHeader(http.StatusOK)
 		// 	writer.Write([]byte(`{"accounts":[]}`))
 		// 	return
-		// case len(updateMatches) > 0:
-		// 	if request.Method != http.MethodPost {
-		// 		writer.WriteHeader(http.StatusMethodNotAllowed)
-		// 		return
-		// 	}
+		case len(updateMatches) > 0:
+			startTime := time.Now()
 
-		// 	// server.stats.Add(request)
+			if request.Method != http.MethodPost {
+				writer.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 
-		// 	ui64, err := strconv.ParseUint(updateMatches[1], 10, 32)
-		// 	if err != nil {
-		// 		writer.WriteHeader(http.StatusBadRequest)
-		// 		return
-		// 	}
+			ui64, err := strconv.ParseUint(updateMatches[1], 10, 32)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
-		// 	account := server.store.Get(uint32(ui64))
-		// 	if account == nil {
-		// 		writer.WriteHeader(http.StatusNotFound)
-		// 		return
-		// 	}
+			account, ok := server.store.Get(ID(ui64))
+			if !ok {
+				writer.WriteHeader(http.StatusNotFound)
+				return
+			}
 
-		// 	rawAccount, err := server.parser.DecodeAccount(request.Body, true)
-		// 	if err != nil {
-		// 		writer.WriteHeader(http.StatusBadRequest)
-		// 		return
-		// 	}
+			rawAccount, err := server.parser.DecodeAccount(request.Body, true)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
-		// 	_, err = server.store.Update(account.ID, rawAccount)
-		// 	if err != nil {
-		// 		writer.WriteHeader(http.StatusBadRequest)
-		// 		return
-		// 	}
+			_, err = server.store.Update(account.ID, rawAccount, true)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
-		// 	writer.WriteHeader(http.StatusAccepted)
-		// 	writer.Write([]byte(`{}`))
-		// 	return
-		// }
+			writer.WriteHeader(http.StatusAccepted)
+			writer.Write([]byte(`{}`))
+
+			server.stats.Add(ServerStatsPostUpdate, request, time.Now().Sub(startTime))
+
+			return
+		}
 
 		writer.WriteHeader(http.StatusNotFound)
 	})
@@ -231,7 +241,15 @@ type ServerStatsSet struct {
 	Time   time.Duration
 }
 
-func (stats *ServerStats) Add(request *http.Request, d time.Duration) {
+const (
+	ServerStatsGetFilter  = "/accounts/filter/"
+	ServerStatsGetGroup   = "/accounts/group/"
+	ServerStatsPostNew    = "/accounts/new/"
+	ServerStatsPostUpdate = "/accounts/XXX/"
+	ServerStatsPostLikes  = "/accounts/likes/"
+)
+
+func (stats *ServerStats) Add(path string, request *http.Request, d time.Duration) {
 	var p sort.StringSlice
 	for param := range request.URL.Query() {
 		if param == "query_id" || param == "limit" {
@@ -240,26 +258,26 @@ func (stats *ServerStats) Add(request *http.Request, d time.Duration) {
 		p = append(p, param)
 	}
 	params := "<empty>"
-	if len(p) > 0 {
-		sort.Sort(p)
-		params = strings.Join(p, ",")
+	if request.Method == http.MethodGet {
+		if len(p) > 0 {
+			sort.Sort(p)
+			params = strings.Join(p, ",")
+		}
 	}
-
-	path := &request.URL.Path
-	if _, ok := stats.Routes[*path]; !ok {
-		stats.Routes[*path] = make(ServerStatsRoute, 0, 512)
+	if _, ok := stats.Routes[path]; !ok {
+		stats.Routes[path] = make(ServerStatsRoute, 0, 512)
 	}
-	index := len(stats.Routes[*path])
-	for indx, set := range stats.Routes[*path] {
+	index := len(stats.Routes[path])
+	for indx, set := range stats.Routes[path] {
 		if set.Params == params {
 			index = indx
 		}
 	}
-	if index != len(stats.Routes[*path]) {
-		stats.Routes[*path][index].Total++
-		stats.Routes[*path][index].Time += d
+	if index != len(stats.Routes[path]) {
+		stats.Routes[path][index].Total++
+		stats.Routes[path][index].Time += d
 	} else {
-		stats.Routes[*path] = append(stats.Routes[*path], ServerStatsSet{
+		stats.Routes[path] = append(stats.Routes[path], ServerStatsSet{
 			Params: params,
 			Total:  1,
 			Time:   d,
@@ -281,8 +299,9 @@ func (stats *ServerStats) Sort() {
 func (stats *ServerStats) Format() string {
 	str := fmt.Sprintf("TotalRequests = %d", stats.Total)
 	for routeName := range stats.Routes {
+		str += fmt.Sprintf("\n%s:", routeName)
 		for _, set := range stats.Routes[routeName] {
-			str += fmt.Sprintf("\n%s, total = %d, avg = %dms", set.Params, set.Total, set.Time/time.Millisecond/time.Duration(set.Total))
+			str += fmt.Sprintf("\n    %s, total = %d, total_time = %d, avg = %dms", set.Params, set.Total, set.Time, set.Time/time.Millisecond/time.Duration(set.Total))
 		}
 	}
 	return str

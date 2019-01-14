@@ -1,57 +1,91 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexYear struct {
-	years map[Year]IDS
+	rwLock sync.RWMutex
+	years  map[Year]*IndexID
 }
 
 func NewIndexYear() *IndexYear {
 	return &IndexYear{
-		years: make(map[Year]IDS),
+		years: make(map[Year]*IndexID),
 	}
 }
 
-func (indexYear *IndexYear) Add(year Year, ID uint32) {
-	_, ok := indexYear.years[year]
+func (index *IndexYear) Add(year Year, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.years[year]
 	if !ok {
-		indexYear.years[year] = make([]uint32, 1)
-		indexYear.years[year][0] = ID
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.years[year] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.years[year].Add(id)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexYear.years[year] = append(indexYear.years[year], ID)
+	index.years[year].Add(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexYear *IndexYear) Remove(year Year, ID uint32) {
-	_, ok := indexYear.years[year]
+func (index *IndexYear) Append(year Year, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.years[year]
 	if !ok {
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.years[year] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.years[year].Append(id)
+		index.rwLock.RUnlock()
 		return
 	}
-	for i, accountID := range indexYear.years[year] {
-		if accountID == ID {
-			indexYear.years[year] = append(indexYear.years[year][:i], indexYear.years[year][i+1:]...)
-			return
-		}
-	}
+	index.years[year].Append(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexYear *IndexYear) Update(year Year) {
-	if year == 0 {
-		for year := range indexYear.years {
-			sort.Sort(indexYear.years[year])
-		}
+func (index *IndexYear) Update(year Year) {
+	index.rwLock.Lock()
+	_, ok := index.years[year]
+	if !ok {
+		index.rwLock.Unlock()
 		return
 	}
-
-	if _, ok := indexYear.years[year]; ok {
-		sort.Sort(indexYear.years[year])
-	}
+	index.years[year].Update()
+	index.rwLock.Unlock()
 }
 
-func (indexYear *IndexYear) Get(year Year) IDS {
-	if _, ok := indexYear.years[year]; ok {
-		return indexYear.years[year]
+func (index *IndexYear) UpdateAll() {
+	index.rwLock.Lock()
+	for year := range index.years {
+		index.years[year].Update()
 	}
+	index.rwLock.Unlock()
+}
+
+func (index *IndexYear) Remove(year Year, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.years[year]
+	if !ok {
+		index.rwLock.RUnlock()
+		return
+	}
+	index.years[year].Remove(id)
+	index.rwLock.RUnlock()
+}
+
+func (index *IndexYear) Find(year Year) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.years[year]; ok {
+		ids := index.years[year].FindAll()
+		index.rwLock.RUnlock()
+		return ids
+	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }

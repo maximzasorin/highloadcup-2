@@ -1,44 +1,55 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexLikee struct {
-	likees map[uint32]IDS // list?
+	rwLock sync.RWMutex
+	likees map[ID]*IndexID
 }
 
 func NewIndexLikee() *IndexLikee {
 	return &IndexLikee{
-		likees: make(map[uint32]IDS),
+		likees: make(map[ID]*IndexID),
 	}
 }
 
-func (indexLikee *IndexLikee) Add(likee uint32, liker uint32) {
-	_, ok := indexLikee.likees[likee]
+func (index *IndexLikee) Add(likee ID, liker ID) {
+	index.rwLock.RLock()
+	_, ok := index.likees[likee]
 	if !ok {
-		indexLikee.likees[likee] = make([]uint32, 1)
-		indexLikee.likees[likee][0] = liker
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.likees[likee] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.likees[likee].Add(liker)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexLikee.likees[likee] = append(indexLikee.likees[likee], liker)
+	index.likees[likee].Add(liker)
+	index.rwLock.RUnlock()
 }
 
-func (indexLikee *IndexLikee) Update(likee uint32) {
-	if likee == 0 {
-		for likee := range indexLikee.likees {
-			sort.Sort(indexLikee.likees[likee])
-		}
+func (index *IndexLikee) Remove(likee ID, liker ID) {
+	index.rwLock.RLock()
+	_, ok := index.likees[likee]
+	if !ok {
+		index.rwLock.RUnlock()
 		return
 	}
-
-	if _, ok := indexLikee.likees[likee]; ok {
-		sort.Sort(indexLikee.likees[likee])
-	}
+	index.likees[likee].Remove(liker)
+	index.rwLock.RUnlock()
 }
 
-func (indexLikee *IndexLikee) Get(likee uint32) IDS {
-	if _, ok := indexLikee.likees[likee]; ok {
-		return indexLikee.likees[likee]
+func (index *IndexLikee) Find(likee ID) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.likees[likee]; ok {
+		ids := index.likees[likee].FindAll()
+		index.rwLock.RUnlock()
+		return ids
 	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }

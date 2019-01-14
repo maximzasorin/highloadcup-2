@@ -1,57 +1,91 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexCity struct {
-	cities map[City]IDS
+	rwLock sync.RWMutex
+	cities map[City]*IndexID
 }
 
 func NewIndexCity() *IndexCity {
 	return &IndexCity{
-		cities: make(map[City]IDS),
+		cities: make(map[City]*IndexID),
 	}
 }
 
-func (indexCity *IndexCity) Add(city City, ID uint32) {
-	_, ok := indexCity.cities[city]
+func (index *IndexCity) Add(city City, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.cities[city]
 	if !ok {
-		indexCity.cities[city] = make([]uint32, 1)
-		indexCity.cities[city][0] = ID
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.cities[city] = NewIndexID(50)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.cities[city].Add(id)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexCity.cities[city] = append(indexCity.cities[city], ID)
+	index.cities[city].Add(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexCity *IndexCity) Remove(city City, ID uint32) {
-	_, ok := indexCity.cities[city]
+func (index *IndexCity) Append(city City, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.cities[city]
 	if !ok {
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.cities[city] = NewIndexID(50)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.cities[city].Append(id)
+		index.rwLock.RUnlock()
 		return
 	}
-	for i, accountID := range indexCity.cities[city] {
-		if accountID == ID {
-			indexCity.cities[city] = append(indexCity.cities[city][:i], indexCity.cities[city][i+1:]...)
-			return
-		}
-	}
+	index.cities[city].Append(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexCity *IndexCity) Update(city City) {
-	if city == 0 {
-		for city := range indexCity.cities {
-			sort.Sort(indexCity.cities[city])
-		}
+func (index *IndexCity) Update(city City) {
+	index.rwLock.Lock()
+	_, ok := index.cities[city]
+	if !ok {
+		index.rwLock.Unlock()
 		return
 	}
-
-	if _, ok := indexCity.cities[city]; ok {
-		sort.Sort(indexCity.cities[city])
-	}
+	index.cities[city].Update()
+	index.rwLock.Unlock()
 }
 
-func (indexCity *IndexCity) Get(city City) IDS {
-	if _, ok := indexCity.cities[city]; ok {
-		return indexCity.cities[city]
+func (index *IndexCity) UpdateAll() {
+	index.rwLock.Lock()
+	for city := range index.cities {
+		index.cities[city].Update()
 	}
+	index.rwLock.Unlock()
+}
+
+func (index *IndexCity) Remove(city City, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.cities[city]
+	if !ok {
+		index.rwLock.RUnlock()
+		return
+	}
+	index.cities[city].Remove(id)
+	index.rwLock.RUnlock()
+}
+
+func (index *IndexCity) Find(city City) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.cities[city]; ok {
+		ids := index.cities[city].FindAll()
+		index.rwLock.RUnlock()
+		return ids
+	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }

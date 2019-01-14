@@ -1,57 +1,91 @@
 package main
 
-import "sort"
+import (
+	"sync"
+)
 
 type IndexCountry struct {
-	countries map[Country]IDS
+	rwLock    sync.RWMutex
+	countries map[Country]*IndexID
 }
 
 func NewIndexCountry() *IndexCountry {
 	return &IndexCountry{
-		countries: make(map[Country]IDS),
+		countries: make(map[Country]*IndexID),
 	}
 }
 
-func (indexCountry *IndexCountry) Add(country Country, ID uint32) {
-	_, ok := indexCountry.countries[country]
+func (index *IndexCountry) Add(country Country, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.countries[country]
 	if !ok {
-		indexCountry.countries[country] = make(IDS, 1)
-		indexCountry.countries[country][0] = ID
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.countries[country] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.countries[country].Add(id)
+		index.rwLock.RUnlock()
 		return
 	}
-
-	indexCountry.countries[country] = append(indexCountry.countries[country], ID)
+	index.countries[country].Add(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexCountry *IndexCountry) Remove(country Country, ID uint32) {
-	_, ok := indexCountry.countries[country]
+func (index *IndexCountry) Append(country Country, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.countries[country]
 	if !ok {
+		index.rwLock.RUnlock()
+		index.rwLock.Lock()
+		index.countries[country] = NewIndexID(64)
+		index.rwLock.Unlock()
+		index.rwLock.RLock()
+		index.countries[country].Append(id)
+		index.rwLock.RUnlock()
 		return
 	}
-	for i, accountID := range indexCountry.countries[country] {
-		if accountID == ID {
-			indexCountry.countries[country] = append(indexCountry.countries[country][:i], indexCountry.countries[country][i+1:]...)
-			return
-		}
-	}
+	index.countries[country].Append(id)
+	index.rwLock.RUnlock()
 }
 
-func (indexCountry *IndexCountry) Update(country Country) {
-	if country == 0 {
-		for country := range indexCountry.countries {
-			sort.Sort(indexCountry.countries[country])
-		}
+func (index *IndexCountry) Update(country Country) {
+	index.rwLock.Lock()
+	_, ok := index.countries[country]
+	if !ok {
+		index.rwLock.Unlock()
 		return
 	}
-
-	if _, ok := indexCountry.countries[country]; ok {
-		sort.Sort(indexCountry.countries[country])
-	}
+	index.countries[country].Update()
+	index.rwLock.Unlock()
 }
 
-func (indexCountry *IndexCountry) Get(country Country) IDS {
-	if _, ok := indexCountry.countries[country]; ok {
-		return indexCountry.countries[country]
+func (index *IndexCountry) UpdateAll() {
+	index.rwLock.Lock()
+	for country := range index.countries {
+		index.countries[country].Update()
 	}
+	index.rwLock.Unlock()
+}
+
+func (index *IndexCountry) Remove(country Country, id ID) {
+	index.rwLock.RLock()
+	_, ok := index.countries[country]
+	if !ok {
+		index.rwLock.RUnlock()
+		return
+	}
+	index.countries[country].Remove(id)
+	index.rwLock.RUnlock()
+}
+
+func (index *IndexCountry) Find(country Country) IDS {
+	index.rwLock.RLock()
+	if _, ok := index.countries[country]; ok {
+		ids := index.countries[country].FindAll()
+		index.rwLock.RUnlock()
+		return ids
+	}
+	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
