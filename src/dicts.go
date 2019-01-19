@@ -190,20 +190,20 @@ func (dicts *Dicts) ExistsCityInCountry(city City, country Country) bool {
 	return country == cityCountry
 }
 
-func (dicts *Dicts) UpdateCountryCities(store *Store) {
-	for cityStr := range dicts.cities {
-		city := dicts.cities[cityStr]
-		if _, known := dicts.cityCountry[city]; known {
-			continue
-		}
-		for _, account := range *store.GetAll() {
-			if account.City == city && account.Country != 0 {
-				dicts.cityCountry[city] = account.Country
-				dicts.countryCities[account.Country] = append(dicts.countryCities[account.Country], account.City)
-			}
-		}
-	}
-}
+// func (dicts *Dicts) UpdateCountryCities(store *Store) {
+// 	for cityStr := range dicts.cities {
+// 		city := dicts.cities[cityStr]
+// 		if _, known := dicts.cityCountry[city]; known {
+// 			continue
+// 		}
+// 		for _, account := range store.GetAll() {
+// 			if account.City == city && account.Country != 0 {
+// 				dicts.cityCountry[city] = account.Country
+// 				dicts.countryCities[account.Country] = append(dicts.countryCities[account.Country], account.City)
+// 			}
+// 		}
+// 	}
+// }
 
 func (dicts *Dicts) AddInterest(interestStr string) Interest {
 	interest, exists := dicts.interests[interestStr]

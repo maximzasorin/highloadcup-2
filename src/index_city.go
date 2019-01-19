@@ -89,3 +89,10 @@ func (index *IndexCity) Find(city City) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexCity) Len() int {
+	index.rwLock.RLock()
+	citiesLen := len(index.cities)
+	index.rwLock.RUnlock()
+	return citiesLen
+}

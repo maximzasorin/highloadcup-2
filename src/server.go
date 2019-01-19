@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -40,7 +39,7 @@ func (server *Server) GetStats() *ServerStats {
 
 func (server *Server) Handle() error {
 	handleRouteGet("/accounts/filter/", func(writer http.ResponseWriter, request *http.Request) {
-		startTime := time.Now()
+		// startTime := time.Now()
 
 		filter := NewFilter(server.parser, server.dicts)
 		err := filter.Parse(request.URL.RawQuery)
@@ -57,7 +56,8 @@ func (server *Server) Handle() error {
 		writer.WriteHeader(http.StatusOK)
 		writer.Write(encoded)
 
-		server.stats.Add(ServerStatsGetFilter, request, time.Now().Sub(startTime))
+		// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
+		// server.stats.Add(ServerStatsGetFilter, params, startTime)
 	})
 
 	// handleRouteGet("/accounts/group/", func(writer http.ResponseWriter, request *http.Request) {
@@ -74,18 +74,24 @@ func (server *Server) Handle() error {
 	// 	// writer.WriteHeader(http.StatusOK)
 	// 	// writer.Write([]byte(`{"accounts":[]}`))
 
-	// 	aggregation := server.store.GroupAll(group)
-	// 	encoded := server.parser.EncodeAggregation(aggregation)
+	// 	groupEntries := server.store.GroupAll(group)
+	// 	encoded := server.parser.EncodeGroupEntries(groupEntries)
 
 	// 	writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
 	// 	writer.WriteHeader(http.StatusOK)
 	// 	writer.Write(encoded)
 
-	// 	server.stats.Add(ServerStatsGetGroup, request, time.Now().Sub(startTime))
+	// 	params := getParams(request, []string{"limit", "query_id", "order", "keys"})
+	// 	keys, ok := request.URL.Query()["keys"]
+	// 	if ok {
+	// 		params = append([]string{"keys:[" + keys[0] + "]"}, params...)
+	// 	}
+	// 	paramsStr := strings.Join(params, ",")
+	// 	server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
 	// })
 
 	handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
-		startTime := time.Now()
+		// startTime := time.Now()
 
 		rawAccount, err := server.parser.DecodeAccount(request.Body, false)
 		if err != nil {
@@ -102,11 +108,11 @@ func (server *Server) Handle() error {
 		writer.WriteHeader(http.StatusCreated)
 		writer.Write([]byte(`{}`))
 
-		server.stats.Add(ServerStatsPostNew, request, time.Now().Sub(startTime))
+		// server.stats.Add(ServerStatsPostNew, "", startTime)
 	})
 
 	handleRoutePost("/accounts/likes/", func(writer http.ResponseWriter, request *http.Request) {
-		startTime := time.Now()
+		// startTime := time.Now()
 
 		rawLikes, err := server.parser.DecodeLikes(request.Body)
 		if err != nil {
@@ -123,41 +129,57 @@ func (server *Server) Handle() error {
 		writer.WriteHeader(http.StatusAccepted)
 		writer.Write([]byte(`{}`))
 
-		server.stats.Add(ServerStatsPostLikes, request, time.Now().Sub(startTime))
+		// server.stats.Add(ServerStatsPostLikes, "", startTime)
 	})
 
-	// recommendRegexp := regexp.MustCompile("^/accounts/([0-9]+)/recommend/$")
+	recommendRegexp := regexp.MustCompile("^/accounts/([0-9]+)/recommend/$")
 	// suggestRegexp := regexp.MustCompile("^/accounts/([0-9]+)/suggest/$")
 	updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
 
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-		// recommendMatches := recommendRegexp.FindStringSubmatch(request.URL.Path)
+		recommendMatches := recommendRegexp.FindStringSubmatch(request.URL.Path)
 		// suggestMatches := suggestRegexp.FindStringSubmatch(request.URL.Path)
 		updateMatches := updateRegex.FindStringSubmatch(request.URL.Path)
 
 		switch {
-		// case len(recommendMatches) > 0:
-		// 	if request.Method != http.MethodGet {
-		// 		writer.WriteHeader(http.StatusMethodNotAllowed)
-		// 		return
-		// 	}
+		case len(recommendMatches) > 0:
+			// startTime := time.Now()
 
-		// 	// server.stats.Add(request)
+			if request.Method != http.MethodGet {
+				writer.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 
-		// 	recommend := NewRecommend(server.store, server.dicts)
-		// 	err := recommend.Parse(recommendMatches[1], request.URL.RawQuery)
-		// 	if err != nil {
-		// 		writer.WriteHeader(http.StatusBadRequest)
-		// 		return
-		// 	}
-		// 	if recommend.Account == nil {
-		// 		writer.WriteHeader(http.StatusNotFound)
-		// 		return
-		// 	}
+			ui64, err := strconv.ParseUint(recommendMatches[1], 10, 32)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
-		// 	writer.WriteHeader(http.StatusOK)
-		// 	writer.Write([]byte(`{"accounts":[]}`))
-		// 	return
+			account, ok := server.store.Get(ID(ui64))
+			if !ok {
+				writer.WriteHeader(http.StatusNotFound)
+				return
+			}
+
+			recommend := NewRecommend(server.store, server.dicts)
+			err = recommend.Parse(request.URL.RawQuery)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			accounts := server.store.RecommendAll(account, recommend)
+			encoded := server.parser.EncodeAccounts(accounts, recommend)
+
+			writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+			writer.WriteHeader(http.StatusOK)
+			writer.Write(encoded)
+
+			// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
+			// server.stats.Add(ServerStatsGetRecommend, params, startTime)
+
+			return
 		// case len(suggestMatches) > 0:
 		// 	if request.Method != http.MethodGet {
 		// 		writer.WriteHeader(http.StatusMethodNotAllowed)
@@ -181,7 +203,7 @@ func (server *Server) Handle() error {
 		// 	writer.Write([]byte(`{"accounts":[]}`))
 		// 	return
 		case len(updateMatches) > 0:
-			startTime := time.Now()
+			// startTime := time.Now()
 
 			if request.Method != http.MethodPost {
 				writer.WriteHeader(http.StatusMethodNotAllowed)
@@ -215,7 +237,7 @@ func (server *Server) Handle() error {
 			writer.WriteHeader(http.StatusAccepted)
 			writer.Write([]byte(`{}`))
 
-			server.stats.Add(ServerStatsPostUpdate, request, time.Now().Sub(startTime))
+			// server.stats.Add(ServerStatsPostUpdate, "", startTime)
 
 			return
 		}
@@ -242,28 +264,17 @@ type ServerStatsSet struct {
 }
 
 const (
-	ServerStatsGetFilter  = "/accounts/filter/"
-	ServerStatsGetGroup   = "/accounts/group/"
-	ServerStatsPostNew    = "/accounts/new/"
-	ServerStatsPostUpdate = "/accounts/XXX/"
-	ServerStatsPostLikes  = "/accounts/likes/"
+	ServerStatsGetFilter    = "/accounts/filter/"
+	ServerStatsGetGroup     = "/accounts/group/"
+	ServerStatsPostNew      = "/accounts/new/"
+	ServerStatsPostUpdate   = "/accounts/XXX/"
+	ServerStatsGetRecommend = "/accounts/XXX/recommend/"
+	ServerStatsGetSuggest   = "/accounts/XXX/suggest/"
+	ServerStatsPostLikes    = "/accounts/likes/"
 )
 
-func (stats *ServerStats) Add(path string, request *http.Request, d time.Duration) {
-	var p sort.StringSlice
-	for param := range request.URL.Query() {
-		if param == "query_id" || param == "limit" {
-			continue
-		}
-		p = append(p, param)
-	}
-	params := "<empty>"
-	if request.Method == http.MethodGet {
-		if len(p) > 0 {
-			sort.Sort(p)
-			params = strings.Join(p, ",")
-		}
-	}
+func (stats *ServerStats) Add(path string, params string, start time.Time) {
+	d := time.Now().Sub(start)
 	if _, ok := stats.Routes[path]; !ok {
 		stats.Routes[path] = make(ServerStatsRoute, 0, 512)
 	}
@@ -286,6 +297,27 @@ func (stats *ServerStats) Add(path string, request *http.Request, d time.Duratio
 	stats.Total++
 }
 
+func getParams(request *http.Request, except []string) []string {
+	var params sort.StringSlice
+	for param := range request.URL.Query() {
+		skip := false
+		for _, ex := range except {
+			if ex == param {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		params = append(params, param)
+	}
+	if len(params) > 0 {
+		sort.Sort(params)
+	}
+	return params
+}
+
 // func (stats *ServerStats) Routes() ServerStatsRoutes {
 // 	return stats.routes
 // }
@@ -301,7 +333,7 @@ func (stats *ServerStats) Format() string {
 	for routeName := range stats.Routes {
 		str += fmt.Sprintf("\n%s:", routeName)
 		for _, set := range stats.Routes[routeName] {
-			str += fmt.Sprintf("\n    %s, total = %d, total_time = %d, avg = %dms", set.Params, set.Total, set.Time, set.Time/time.Millisecond/time.Duration(set.Total))
+			str += fmt.Sprintf("\n    %s, total = %d, total_time = %d, avg = %dmus", set.Params, set.Total, set.Time, set.Time/time.Microsecond/time.Duration(set.Total))
 		}
 	}
 	return str

@@ -89,3 +89,10 @@ func (index *IndexFname) Find(fname Fname) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexFname) Len() int {
+	index.rwLock.RLock()
+	fnamesLen := len(index.fnames)
+	index.rwLock.RUnlock()
+	return fnamesLen
+}

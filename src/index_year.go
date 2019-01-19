@@ -89,3 +89,10 @@ func (index *IndexYear) Find(year Year) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexYear) Len() int {
+	index.rwLock.RLock()
+	yearsLen := len(index.years)
+	index.rwLock.RUnlock()
+	return yearsLen
+}

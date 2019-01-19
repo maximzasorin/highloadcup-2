@@ -3,20 +3,41 @@ package main
 import (
 	"errors"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 )
 
 type GroupKey byte
+type GroupHash uint64
 
 const (
-	GroupBySex GroupKey = iota + 1
-	GroupByStatus
-	GroupByInterests
-	GroupByCountry
-	GroupByCity
+	GroupSex GroupKey = 1 << iota
+	GroupStatus
+	GroupInterests
+	GroupCountry
+	GroupCity
+	GroupBirth
+	GroupJoined
+	GroupLikes
 )
+
+// https://github.com/MailRuChamps/hlcupdocs/issues/119#issuecomment-450162555
+type GroupFilter struct {
+	ExpectEmpty   bool
+	NoFilter      bool
+	Sex           *byte
+	Status        *byte
+	Country       *Country
+	City          *City
+	BirthYear     *Year
+	BirthYearGte  *int64
+	BirthYearLte  *int64
+	Interests     *Interest // one interest
+	Likes         *uint32   // account id
+	JoinedYear    *Year
+	JoinedYearGte *uint32
+	JoinedYearLte *uint32
+}
 
 type Group struct {
 	parser *Parser
@@ -27,26 +48,14 @@ type Group struct {
 	OrderAsc *bool
 
 	// Filter
-	// https://github.com/MailRuChamps/hlcupdocs/issues/119#issuecomment-450162555
-	Filter struct {
-		ExpectEmpty   bool
-		NoFilter      bool
-		Sex           *byte
-		Status        *byte
-		Country       *Country
-		City          *City
-		BirthYear     *Year
-		BirthYearGte  *int64
-		BirthYearLte  *int64
-		Interests     *Interest // one interest
-		Likes         *uint32   // account id
-		JoinedYear    *Year
-		JoinedYearGte *uint32
-		JoinedYearLte *uint32
-	}
+	Filter     GroupFilter
+	FilterBits GroupKey
 
 	// Group
-	Keys []GroupKey
+	Keys     []GroupKey
+	KeysBits GroupKey
+
+	AllBits GroupKey
 
 	// // Group
 	// Keys struct {
@@ -90,6 +99,8 @@ func (group *Group) Parse(query string) error {
 		return errors.New("Order should be specified")
 	}
 
+	group.AllBits = group.KeysBits | group.FilterBits
+
 	filter := &group.Filter
 	filter.NoFilter = filter.Sex == nil &&
 		filter.Status == nil &&
@@ -104,12 +115,7 @@ func (group *Group) Parse(query string) error {
 }
 
 func (group *Group) HasKey(key GroupKey) bool {
-	for _, k := range group.Keys {
-		if key == k {
-			return true
-		}
-	}
-	return false
+	return (group.KeysBits & key) > 0
 }
 
 func (group *Group) ParseParam(param string, value string) error {
@@ -120,15 +126,20 @@ func (group *Group) ParseParam(param string, value string) error {
 		for _, key := range strings.Split(value, ",") {
 			switch key {
 			case "sex":
-				group.Keys = append(group.Keys, GroupBySex)
+				group.Keys = append(group.Keys, GroupSex)
+				group.KeysBits |= GroupSex
 			case "status":
-				group.Keys = append(group.Keys, GroupByStatus)
+				group.Keys = append(group.Keys, GroupStatus)
+				group.KeysBits |= GroupStatus
 			case "interests":
-				group.Keys = append(group.Keys, GroupByInterests)
+				group.Keys = append(group.Keys, GroupInterests)
+				group.KeysBits |= GroupInterests
 			case "country":
-				group.Keys = append(group.Keys, GroupByCountry)
+				group.Keys = append(group.Keys, GroupCountry)
+				group.KeysBits |= GroupCountry
 			case "city":
-				group.Keys = append(group.Keys, GroupByCity)
+				group.Keys = append(group.Keys, GroupCity)
+				group.KeysBits |= GroupCity
 			default:
 				return errors.New("Unknown group key " + key)
 			}
@@ -138,12 +149,14 @@ func (group *Group) ParseParam(param string, value string) error {
 		if err != nil {
 			return err
 		}
+		group.FilterBits |= GroupSex
 		filter.Sex = &sex
 	case "status":
 		status, err := group.parser.ParseStatus(value)
 		if err != nil {
 			return err
 		}
+		group.FilterBits |= GroupStatus
 		filter.Status = &status
 	case "country":
 		country, err := group.dicts.GetCountry(value)
@@ -151,6 +164,7 @@ func (group *Group) ParseParam(param string, value string) error {
 			filter.ExpectEmpty = true
 			return nil
 		}
+		group.FilterBits |= GroupCountry
 		filter.Country = &country
 	case "city":
 		city, err := group.dicts.GetCity(value)
@@ -158,6 +172,7 @@ func (group *Group) ParseParam(param string, value string) error {
 			filter.ExpectEmpty = true
 			return nil
 		}
+		group.FilterBits |= GroupCity
 		filter.City = &city
 	case "birth":
 		ui64, err := strconv.ParseUint(value, 10, 16)
@@ -166,6 +181,7 @@ func (group *Group) ParseParam(param string, value string) error {
 		}
 		birthYear := Year(ui64)
 		filter.BirthYear = &birthYear
+		group.FilterBits |= GroupBirth
 
 		birthYearGte, birthYearLte := YearToTimestamp(birthYear)
 		filter.BirthYearGte = &birthYearGte
@@ -176,6 +192,7 @@ func (group *Group) ParseParam(param string, value string) error {
 			filter.ExpectEmpty = true
 			return nil
 		}
+		group.FilterBits |= GroupInterests
 		filter.Interests = &interest
 	case "likes":
 		ui64, err := strconv.ParseUint(value, 10, 32)
@@ -184,6 +201,7 @@ func (group *Group) ParseParam(param string, value string) error {
 		}
 		likeID := uint32(ui64)
 		filter.Likes = &likeID
+		group.FilterBits |= GroupLikes
 	case "joined":
 		ui64, err := strconv.ParseUint(value, 10, 16)
 		if err != nil {
@@ -191,6 +209,7 @@ func (group *Group) ParseParam(param string, value string) error {
 		}
 		joinedYear := Year(ui64)
 		filter.JoinedYear = &joinedYear
+		group.FilterBits |= GroupJoined
 
 		gte64, lte64 := YearToTimestamp(joinedYear)
 		joinedYearGte := uint32(gte64)
@@ -227,90 +246,171 @@ func (group *Group) ParseParam(param string, value string) error {
 	return nil
 }
 
-type AggregationGroup struct {
-	Sex      *byte
-	Status   *byte
-	Country  *Country
-	City     *City
-	Interest *Interest
-	Count    uint32
+type GroupEntry struct {
+	Sex        byte     // 2
+	Status     byte     // 3
+	City       City     // 610
+	Country    Country  // 71
+	Interest   Interest // 90
+	BirthYear  Year     // 27
+	JoinedYear Year     // 5
+	Hash       GroupHash
+	Count      uint32
 }
 
-func (a *AggregationGroup) equal(b *AggregationGroup) bool {
-	return ((a.Sex == nil && b.Sex == nil) || (a.Sex != nil && b.Sex != nil && *a.Sex == *b.Sex)) &&
-		((a.Status == nil && b.Status == nil) || (a.Status != nil && b.Status != nil && *a.Status == *b.Status)) &&
-		((a.Country == nil && b.Country == nil) || (a.Country != nil && b.Country != nil && *a.Country == *b.Country)) &&
-		((a.City == nil && b.City == nil) || (a.City != nil && b.City != nil && *a.City == *b.City)) &&
-		((a.Interest == nil && b.Interest == nil) || (a.Interest != nil && b.Interest != nil && *a.Interest == *b.Interest))
+type GroupEntries struct {
+	dicts   *Dicts
+	keys    []GroupKey
+	entries []*GroupEntry
 }
 
-type AggregationGroups []*AggregationGroup
+func (groupEntries *GroupEntries) Get() []*GroupEntry {
+	return groupEntries.entries
+}
+
+// func NewGroupEntries(dicts *Dicts, keys []GroupKey, entries []*GroupEntry) *GroupEntries {
+// 	return &GroupEntries{dicts, keys, entries}
+// }
+
+func CreateGroupHash(groupEntry *GroupEntry) GroupHash {
+	// var arr [8]byte
+	// arr[0] = groupEntry.Sex
+	// arr[1] = groupEntry.Status
+	// binary.LittleEndian.PutUint16(arr[2:4], uint16(groupEntry.City))
+	// arr[4] = byte(groupEntry.Country)
+	// arr[5] = byte(groupEntry.Interest)
+	// arr[6] = byte(groupEntry.JoinedYear - 1949)
+	// arr[7] = byte(groupEntry.BirthYear - 2010)
+
+	// return GroupHash(binary.LittleEndian.Uint64(arr[:]))
+
+	return GroupHash(uint64(groupEntry.Sex) | uint64(groupEntry.Status)<<8 | uint64(groupEntry.City)<<16 |
+		uint64(groupEntry.Country)<<32 | uint64(groupEntry.Interest)<<40 | uint64(byte(groupEntry.JoinedYear-2010))<<48 |
+		uint64(byte(groupEntry.BirthYear-1949))<<56)
+}
 
 type Aggregation struct {
-	group  *Group
-	Groups AggregationGroups
+	group        *Group
+	groupEntries map[GroupHash]*GroupEntry
 }
 
-func (aggregation *Aggregation) Add(group AggregationGroup) {
-	for _, existsGroup := range aggregation.Groups {
-		if existsGroup.equal(&group) {
-			existsGroup.Count++
-			return
-		}
+func NewAggregation(group *Group) *Aggregation {
+	return &Aggregation{
+		group:        group,
+		groupEntries: make(map[GroupHash]*GroupEntry),
 	}
-	group.Count = 1
-	aggregation.Groups = append(aggregation.Groups, &group)
 }
 
-func (aggregation *Aggregation) Sort(asc bool) {
+func (ag *Aggregation) Add(groupEntry *GroupEntry) {
+	if en, ok := ag.groupEntries[groupEntry.Hash]; ok {
+		en.Count += groupEntry.Count
+		return
+	}
+	ag.groupEntries[groupEntry.Hash] = groupEntry
+}
+
+func (ag *Aggregation) Get(asc bool, limit int) []*GroupEntry {
 	if asc {
-		sort.Sort(aggregation)
-	} else {
-		sort.Sort(sort.Reverse(aggregation))
+		marked := make(map[GroupHash]bool)
+		entries := make([]*GroupEntry, 0)
+		for len(marked) < len(ag.groupEntries) && len(marked) < limit {
+			var minEntry *GroupEntry
+			for _, groupEntry := range ag.groupEntries {
+				if _, ok := marked[groupEntry.Hash]; ok {
+					continue
+				}
+				if minEntry == nil || ag.groupEntryLess(groupEntry, minEntry) {
+					minEntry = groupEntry
+				}
+			}
+			if minEntry == nil {
+				break
+			}
+			entries = append(entries, minEntry)
+			marked[minEntry.Hash] = true
+		}
+		return entries
 	}
+
+	marked := make(map[GroupHash]bool)
+	entries := make([]*GroupEntry, 0)
+	for len(marked) < len(ag.groupEntries) && len(marked) < limit {
+		var maxEntry *GroupEntry
+		for _, groupEntry := range ag.groupEntries {
+			if _, ok := marked[groupEntry.Hash]; ok {
+				continue
+			}
+			if maxEntry == nil || !ag.groupEntryLess(groupEntry, maxEntry) {
+				maxEntry = groupEntry
+			}
+		}
+		if maxEntry == nil {
+			break
+		}
+		entries = append(entries, maxEntry)
+		marked[maxEntry.Hash] = true
+	}
+	return entries
 }
 
-func (aggregation *Aggregation) Limit(limit uint8) {
-	if len(aggregation.Groups) > int(limit) {
-		aggregation.Groups = aggregation.Groups[:limit]
-	}
-}
+// entries := make([]*GroupEntry, 0)
+// for _, groupEntry := range ag.groupEntries {
+// 	entries = append(entries, groupEntry)
+// }
 
-func (a *Aggregation) Len() int { return len(a.Groups) }
-func (a *Aggregation) Swap(i, j int) {
-	a.Groups[i], a.Groups[j] = a.Groups[j], a.Groups[i]
+// groupEntries := &GroupEntries{
+// 	dicts:   ag.group.dicts,
+// 	keys:    ag.group.Keys,
+// 	entries: entries,
+// }
+// if asc {
+// 	sort.Sort(groupEntries)
+// } else {
+// 	sort.Sort(sort.Reverse(groupEntries))
+// }
+// entries = groupEntries.Get()
+// if len(entries) > limit {
+// 	entries = entries[:limit]
+// }
+
+// return entries
+// }
+
+func (groupEntries *GroupEntries) Len() int { return len(groupEntries.entries) }
+func (groupEntries *GroupEntries) Swap(i, j int) {
+	groupEntries.entries[i], groupEntries.entries[j] = groupEntries.entries[j], groupEntries.entries[i]
 }
-func (a *Aggregation) Less(i, j int) bool {
-	if a.Groups[i].Count < a.Groups[j].Count {
+func (groupEntries *GroupEntries) Less(i, j int) bool {
+	if groupEntries.entries[i].Count < groupEntries.entries[j].Count {
 		return true
 	}
-	if a.Groups[i].Count > a.Groups[j].Count {
+	if groupEntries.entries[i].Count > groupEntries.entries[j].Count {
 		return false
 	}
-	for _, key := range a.group.Keys {
+	for _, key := range groupEntries.keys {
 		switch key {
-		case GroupBySex:
-			if *a.Groups[i].Sex < *a.Groups[j].Sex {
+		case GroupSex:
+			if groupEntries.entries[i].Sex < groupEntries.entries[j].Sex {
 				return true
-			} else if *a.Groups[i].Sex > *a.Groups[j].Sex {
+			} else if groupEntries.entries[i].Sex > groupEntries.entries[j].Sex {
 				return false
 			}
-		case GroupByStatus:
-			if *a.Groups[i].Status < *a.Groups[j].Status {
+		case GroupStatus:
+			if groupEntries.entries[i].Status < groupEntries.entries[j].Status {
 				return true
-			} else if *a.Groups[i].Status > *a.Groups[j].Status {
+			} else if groupEntries.entries[i].Status > groupEntries.entries[j].Status {
 				return false
 			}
-		case GroupByInterests:
-			if a.Groups[i].Interest != nil {
-				// if a.Groups[j].Interest == nil {
+		case GroupInterests:
+			if groupEntries.entries[i].Interest != 0 {
+				// if groupEntries.entries[j].Interest == nil {
 				// 	return true
 				// }
-				interestI, err := a.group.dicts.GetInterestString(*a.Groups[i].Interest)
+				interestI, err := groupEntries.dicts.GetInterestString(groupEntries.entries[i].Interest)
 				if err != nil {
 					continue
 				}
-				interestJ, err := a.group.dicts.GetInterestString(*a.Groups[j].Interest)
+				interestJ, err := groupEntries.dicts.GetInterestString(groupEntries.entries[j].Interest)
 				if err != nil {
 					continue
 				}
@@ -321,22 +421,22 @@ func (a *Aggregation) Less(i, j int) bool {
 					return false
 				}
 			}
-		case GroupByCountry:
-			if a.Groups[i].Country != nil && a.Groups[j].Country == nil {
+		case GroupCountry:
+			if groupEntries.entries[i].Country != 0 && groupEntries.entries[j].Country == 0 {
 				return false
 			}
-			if a.Groups[i].Country == nil && a.Groups[j].Country != nil {
+			if groupEntries.entries[i].Country == 0 && groupEntries.entries[j].Country != 0 {
 				return true
 			}
-			if a.Groups[i].Country != nil {
-				// if a.Groups[j].Country == nil {
+			if groupEntries.entries[i].Country != 0 {
+				// if groupEntries.entries[j].Country == nil {
 				// 	return true
 				// }
-				countryI, err := a.group.dicts.GetCountryString(*a.Groups[i].Country)
+				countryI, err := groupEntries.dicts.GetCountryString(groupEntries.entries[i].Country)
 				if err != nil {
 					continue
 				}
-				countryJ, err := a.group.dicts.GetCountryString(*a.Groups[j].Country)
+				countryJ, err := groupEntries.dicts.GetCountryString(groupEntries.entries[j].Country)
 				if err != nil {
 					continue
 				}
@@ -347,19 +447,19 @@ func (a *Aggregation) Less(i, j int) bool {
 					return false
 				}
 			}
-		case GroupByCity:
-			if a.Groups[i].City != nil && a.Groups[j].City == nil {
+		case GroupCity:
+			if groupEntries.entries[i].City != 0 && groupEntries.entries[j].City == 0 {
 				return false
 			}
-			if a.Groups[i].City == nil && a.Groups[j].City != nil {
+			if groupEntries.entries[i].City == 0 && groupEntries.entries[j].City != 0 {
 				return true
 			}
-			if a.Groups[i].City != nil {
-				cityI, err := a.group.dicts.GetCityString(*a.Groups[i].City)
+			if groupEntries.entries[i].City != 0 {
+				cityI, err := groupEntries.dicts.GetCityString(groupEntries.entries[i].City)
 				if err != nil {
 					continue
 				}
-				cityJ, err := a.group.dicts.GetCityString(*a.Groups[j].City)
+				cityJ, err := groupEntries.dicts.GetCityString(groupEntries.entries[j].City)
 				if err != nil {
 					continue
 				}
@@ -374,3 +474,250 @@ func (a *Aggregation) Less(i, j int) bool {
 	}
 	return false
 }
+
+func (ag *Aggregation) groupEntryLess(a *GroupEntry, b *GroupEntry) bool {
+	if a.Count < b.Count {
+		return true
+	}
+	if a.Count > b.Count {
+		return false
+	}
+	for _, key := range ag.group.Keys {
+		switch key {
+		case GroupSex:
+			if a.Sex < b.Sex {
+				return true
+			} else if a.Sex > b.Sex {
+				return false
+			}
+		case GroupStatus:
+			if a.Status < b.Status {
+				return true
+			} else if a.Status > b.Status {
+				return false
+			}
+		case GroupInterests:
+			if a.Interest != 0 {
+				// if b.Interest == nil {
+				// 	return true
+				// }
+				interestI, err := ag.group.dicts.GetInterestString(a.Interest)
+				if err != nil {
+					continue
+				}
+				interestJ, err := ag.group.dicts.GetInterestString(b.Interest)
+				if err != nil {
+					continue
+				}
+				comp := strings.Compare(interestI, interestJ)
+				if comp == -1 {
+					return true
+				} else if comp == 1 {
+					return false
+				}
+			}
+		case GroupCountry:
+			if a.Country != 0 && b.Country == 0 {
+				return false
+			}
+			if a.Country == 0 && b.Country != 0 {
+				return true
+			}
+			if a.Country != 0 {
+				// if b.Country == nil {
+				// 	return true
+				// }
+				countryI, err := ag.group.dicts.GetCountryString(a.Country)
+				if err != nil {
+					continue
+				}
+				countryJ, err := ag.group.dicts.GetCountryString(b.Country)
+				if err != nil {
+					continue
+				}
+				comp := strings.Compare(countryI, countryJ)
+				if comp == -1 {
+					return true
+				} else if comp == 1 {
+					return false
+				}
+			}
+		case GroupCity:
+			if a.City != 0 && b.City == 0 {
+				return false
+			}
+			if a.City == 0 && b.City != 0 {
+				return true
+			}
+			if a.City != 0 {
+				cityI, err := ag.group.dicts.GetCityString(a.City)
+				if err != nil {
+					continue
+				}
+				cityJ, err := ag.group.dicts.GetCityString(b.City)
+				if err != nil {
+					continue
+				}
+				comp := strings.Compare(cityI, cityJ)
+				if comp == -1 {
+					return true
+				} else if comp == 1 {
+					return false
+				}
+			}
+		}
+	}
+	return false
+}
+
+// type AggregationGroup struct {
+// 	Sex      byte
+// 	Status   byte
+// 	Country  Country
+// 	City     City
+// 	Interest Interest
+// 	Count    uint32
+// }
+
+// func (a *AggregationGroup) equal(b *AggregationGroup) bool {
+// 	return a.Sex == b.Sex && a.Status == b.Status && a.Country == b.Country && a.City == b.City && a.Interest == b.Interest
+// }
+
+// type AggregationGroups []*AggregationGroup
+
+// type Aggregation struct {
+// 	group     *Group
+// 	Groups    AggregationGroups
+// 	groupsMap map[[5]uint16]int
+// 	search    [5]uint16
+// }
+
+// func (aggregation *Aggregation) Add(group AggregationGroup) {
+// 	aggregation.search[0] = uint16(group.Sex)
+// 	aggregation.search[1] = uint16(group.Status)
+// 	aggregation.search[2] = uint16(group.City)
+// 	aggregation.search[3] = uint16(group.Country)
+// 	aggregation.search[4] = uint16(group.Interest)
+
+// 	index, ok := aggregation.groupsMap[aggregation.search]
+// 	if ok {
+// 		aggregation.Groups[index].Count += group.Count
+// 		return
+// 	}
+// 	index = len(aggregation.Groups)
+// 	aggregation.Groups = append(aggregation.Groups, &group)
+// 	aggregation.groupsMap[aggregation.search] = index
+// }
+
+// func (aggregation *Aggregation) Sort(asc bool) {
+// 	if asc {
+// 		sort.Sort(aggregation)
+// 	} else {
+// 		sort.Sort(sort.Reverse(aggregation))
+// 	}
+// }
+
+// func (aggregation *Aggregation) Limit(limit uint8) {
+// 	if len(aggregation.Groups) > int(limit) {
+// 		aggregation.Groups = aggregation.Groups[:limit]
+// 	}
+// }
+
+// func (a *Aggregation) Len() int { return len(a.Groups) }
+// func (a *Aggregation) Swap(i, j int) {
+// 	a.Groups[i], a.Groups[j] = a.Groups[j], a.Groups[i]
+// }
+// func (a *Aggregation) Less(i, j int) bool {
+// 	if a.Groups[i].Count < a.Groups[j].Count {
+// 		return true
+// 	}
+// 	if a.Groups[i].Count > a.Groups[j].Count {
+// 		return false
+// 	}
+// 	for _, key := range a.group.Keys {
+// 		switch key {
+// 		case GroupSex:
+// 			if a.Groups[i].Sex < a.Groups[j].Sex {
+// 				return true
+// 			} else if a.Groups[i].Sex > a.Groups[j].Sex {
+// 				return false
+// 			}
+// 		case GroupStatus:
+// 			if a.Groups[i].Status < a.Groups[j].Status {
+// 				return true
+// 			} else if a.Groups[i].Status > a.Groups[j].Status {
+// 				return false
+// 			}
+// 		case GroupInterests:
+// 			if a.Groups[i].Interest != 0 {
+// 				// if a.Groups[j].Interest == nil {
+// 				// 	return true
+// 				// }
+// 				interestI, err := a.group.dicts.GetInterestString(a.Groups[i].Interest)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				interestJ, err := a.group.dicts.GetInterestString(a.Groups[j].Interest)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				comp := strings.Compare(interestI, interestJ)
+// 				if comp == -1 {
+// 					return true
+// 				} else if comp == 1 {
+// 					return false
+// 				}
+// 			}
+// 		case GroupCountry:
+// 			if a.Groups[i].Country != 0 && a.Groups[j].Country == 0 {
+// 				return false
+// 			}
+// 			if a.Groups[i].Country == 0 && a.Groups[j].Country != 0 {
+// 				return true
+// 			}
+// 			if a.Groups[i].Country != 0 {
+// 				// if a.Groups[j].Country == nil {
+// 				// 	return true
+// 				// }
+// 				countryI, err := a.group.dicts.GetCountryString(a.Groups[i].Country)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				countryJ, err := a.group.dicts.GetCountryString(a.Groups[j].Country)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				comp := strings.Compare(countryI, countryJ)
+// 				if comp == -1 {
+// 					return true
+// 				} else if comp == 1 {
+// 					return false
+// 				}
+// 			}
+// 		case GroupCity:
+// 			if a.Groups[i].City != 0 && a.Groups[j].City == 0 {
+// 				return false
+// 			}
+// 			if a.Groups[i].City == 0 && a.Groups[j].City != 0 {
+// 				return true
+// 			}
+// 			if a.Groups[i].City != 0 {
+// 				cityI, err := a.group.dicts.GetCityString(a.Groups[i].City)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				cityJ, err := a.group.dicts.GetCityString(a.Groups[j].City)
+// 				if err != nil {
+// 					continue
+// 				}
+// 				comp := strings.Compare(cityI, cityJ)
+// 				if comp == -1 {
+// 					return true
+// 				} else if comp == 1 {
+// 					return false
+// 				}
+// 			}
+// 		}
+// 	}
+// 	return false
+// }

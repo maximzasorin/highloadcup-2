@@ -89,3 +89,10 @@ func (index *IndexPhoneCode) Find(phoneCode uint16) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexPhoneCode) Len() int {
+	index.rwLock.RLock()
+	phoneCodesLen := len(index.phoneCodes)
+	index.rwLock.RUnlock()
+	return phoneCodesLen
+}

@@ -14,8 +14,8 @@ func (store *Store) FilterAll(filter *Filter) []*Account {
 
 	// scan all
 	count := uint8(1)
-	for _, ID := range store.findIds(filter) {
-		account := store.accounts[ID]
+	for _, id := range store.findIds(filter) {
+		account := store.accounts[id]
 
 		if !filter.NoFilter && !store.filterAccount(account, filter) {
 			continue
@@ -495,11 +495,7 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 	}
 
 	if fields.PremiumNow != nil {
-		if account.Premium == nil {
-			return false
-		}
-
-		if account.Premium.Start > store.now || store.now > account.Premium.Finish {
+		if !store.PremiumNow(account) {
 			return false
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +33,9 @@ func main() {
 	fmt.Println("Create store")
 	store := NewStore(parser, dicts)
 
+	fmt.Println("Read options")
+	readOptions(*dataset+"/options.txt", store)
+
 	fmt.Println("Trying read archive")
 
 	startTime := time.Now()
@@ -43,7 +47,7 @@ func main() {
 	fmt.Println("Create indexes")
 	startIndex := time.Now()
 	j := 1
-	for _, account := range *store.GetAll() {
+	for _, account := range store.GetAll() {
 		store.AppendToIndex(account)
 		if j%10000 == 0 {
 			fmt.Println(j)
@@ -61,12 +65,13 @@ func main() {
 	// fmt.Println("Update country cities")
 	// dicts.UpdateCountryCities(store)
 
-	fmt.Println("Read options")
-	readOptions(*dataset+"/options.txt", store)
-
 	fmt.Println("GOMAXPROCS =", runtime.GOMAXPROCS(-1))
 	fmt.Println("Run GC...")
 	runtime.GC()
+
+	gcPercent := 15
+	fmt.Println("SetGCPercent =", gcPercent)
+	debug.SetGCPercent(gcPercent)
 
 	// a := store.Get(uint32(rand.Int31n(30000)))
 	// fmt.Printf("Example = %+v, size = %db\n", a, unsafe.Sizeof(Account{}))
@@ -74,11 +79,11 @@ func main() {
 	// fmt.Println("Total with premium =", store.WithPremium())
 	// fmt.Println("Count likes =", store.CountLikes())
 	// fmt.Println("Count sex_f =", store.CountSexF())
-	fmt.Println("Total fnames =", len(dicts.GetFnames()))
-	fmt.Println("Total snames =", len(dicts.GetSnames()))
-	fmt.Println("Total countries =", len(dicts.GetCountries()))
-	fmt.Println("Total cities =", len(dicts.GetCities()))
-	fmt.Println("Total interests =", len(dicts.GetInterests()))
+	// fmt.Println("Total fnames =", len(dicts.GetFnames()))
+	// fmt.Println("Total snames =", len(dicts.GetSnames()))
+	// fmt.Println("Total countries =", len(dicts.GetCountries()))
+	// fmt.Println("Total cities =", len(dicts.GetCities()))
+	// fmt.Println("Total interests =", len(dicts.GetInterests()))
 
 	printMemUsage()
 

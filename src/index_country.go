@@ -89,3 +89,19 @@ func (index *IndexCountry) Find(country Country) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexCountry) Count(country Country) (count int) {
+	index.rwLock.RLock()
+	if _, ok := index.countries[country]; ok {
+		count = len(index.countries[country].FindAll())
+	}
+	index.rwLock.RUnlock()
+	return count
+}
+
+func (index *IndexCountry) Len() int {
+	index.rwLock.RLock()
+	countriesLen := len(index.countries)
+	index.rwLock.RUnlock()
+	return countriesLen
+}

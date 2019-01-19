@@ -89,3 +89,10 @@ func (index *IndexInterest) Find(interest Interest) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexInterest) Len() int {
+	index.rwLock.RLock()
+	interestsLen := len(index.interests)
+	index.rwLock.RUnlock()
+	return interestsLen
+}
