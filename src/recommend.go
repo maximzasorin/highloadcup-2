@@ -110,7 +110,7 @@ func Compability(me *Account, somebody *Account) uint64 {
 
 	compability |= commonInts << 32
 
-	diff := me.Birth - somebody.Birth
+	diff := int64(me.Birth - somebody.Birth)
 	if diff < 0 {
 		diff = -diff
 	}

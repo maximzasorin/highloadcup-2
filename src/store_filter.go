@@ -330,11 +330,7 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 	}
 
 	if fields.PhoneCode != nil {
-		if account.PhoneCode == nil {
-			return false
-		}
-
-		if *account.PhoneCode != *fields.PhoneCode {
+		if account.PhoneCode != *fields.PhoneCode {
 			return false
 		}
 	}
@@ -412,19 +408,19 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 	}
 
 	if fields.BirthLt != nil {
-		if account.Birth >= *fields.BirthLt {
+		if int64(account.Birth) >= *fields.BirthLt {
 			return false
 		}
 	}
 
 	if fields.BirthGt != nil {
-		if account.Birth <= *fields.BirthGt {
+		if int64(account.Birth) <= *fields.BirthGt {
 			return false
 		}
 	}
 
 	if fields.BirthYear != nil {
-		if account.Birth < *fields.BirthYearGte || account.Birth > *fields.BirthYearLte {
+		if int64(account.Birth) < *fields.BirthYearGte || int64(account.Birth) > *fields.BirthYearLte {
 			return false
 		}
 	}

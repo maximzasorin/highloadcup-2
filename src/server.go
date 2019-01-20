@@ -133,12 +133,12 @@ func (server *Server) Handle() error {
 	})
 
 	recommendRegexp := regexp.MustCompile("^/accounts/([0-9]+)/recommend/$")
-	// suggestRegexp := regexp.MustCompile("^/accounts/([0-9]+)/suggest/$")
+	suggestRegexp := regexp.MustCompile("^/accounts/([0-9]+)/suggest/$")
 	updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
 
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		recommendMatches := recommendRegexp.FindStringSubmatch(request.URL.Path)
-		// suggestMatches := suggestRegexp.FindStringSubmatch(request.URL.Path)
+		suggestMatches := suggestRegexp.FindStringSubmatch(request.URL.Path)
 		updateMatches := updateRegex.FindStringSubmatch(request.URL.Path)
 
 		switch {
@@ -180,28 +180,44 @@ func (server *Server) Handle() error {
 			// server.stats.Add(ServerStatsGetRecommend, params, startTime)
 
 			return
-		// case len(suggestMatches) > 0:
-		// 	if request.Method != http.MethodGet {
-		// 		writer.WriteHeader(http.StatusMethodNotAllowed)
-		// 		return
-		// 	}
+		case len(suggestMatches) > 0:
+			// startTime := time.Now()
 
-		// 	// server.stats.Add(request)
+			if request.Method != http.MethodGet {
+				writer.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 
-		// 	suggest := NewSuggest(server.store, server.dicts)
-		// 	err := suggest.Parse(suggestMatches[1], request.URL.RawQuery)
-		// 	if err != nil {
-		// 		writer.WriteHeader(http.StatusBadRequest)
-		// 		return
-		// 	}
-		// 	if suggest.Account == nil {
-		// 		writer.WriteHeader(http.StatusNotFound)
-		// 		return
-		// 	}
+			ui64, err := strconv.ParseUint(suggestMatches[1], 10, 32)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 
-		// 	writer.WriteHeader(http.StatusOK)
-		// 	writer.Write([]byte(`{"accounts":[]}`))
-		// 	return
+			account, ok := server.store.Get(ID(ui64))
+			if !ok {
+				writer.WriteHeader(http.StatusNotFound)
+				return
+			}
+
+			suggest := NewSuggest(server.store, server.dicts)
+			err = suggest.Parse(request.URL.RawQuery)
+			if err != nil {
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			accounts := server.store.SuggestAll(account, suggest)
+			encoded := server.parser.EncodeAccounts(accounts, suggest)
+
+			writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+			writer.WriteHeader(http.StatusOK)
+			writer.Write(encoded)
+
+			// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
+			// server.stats.Add(ServerStatsGetSuggest, params, startTime)
+
+			return
 		case len(updateMatches) > 0:
 			// startTime := time.Now()
 

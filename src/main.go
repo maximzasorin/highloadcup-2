@@ -26,15 +26,27 @@ func main() {
 	)
 	flag.Parse()
 
+	setGCPercent(15)
+
 	fmt.Println("Create parser")
 	dicts := NewDicts()
 	parser := NewParser(dicts)
 
-	fmt.Println("Create store")
-	store := NewStore(parser, dicts)
-
 	fmt.Println("Read options")
-	readOptions(*dataset+"/options.txt", store)
+	now, rating := readOptions(*dataset + "/options.txt")
+
+	fmt.Println("Create store")
+	store := NewStore(dicts, now, rating)
+
+	server := NewServer(store, parser, dicts, &ServerOptions{
+		Addr: *addr,
+	})
+
+	go func() {
+		for range time.Tick(5 * time.Second) {
+			printAppStatus(store, server)
+		}
+	}()
 
 	fmt.Println("Trying read archive")
 
@@ -43,6 +55,7 @@ func main() {
 	// readDir(dataset+"/data", store)
 
 	fmt.Println("Total accounts found =", store.Count(), "in", time.Now().Sub(startTime).Round(time.Millisecond))
+	runtime.GC()
 
 	fmt.Println("Create indexes")
 	startIndex := time.Now()
@@ -50,6 +63,7 @@ func main() {
 	for _, account := range store.GetAll() {
 		store.AppendToIndex(account)
 		if j%10000 == 0 {
+			printAppStatus(store, server)
 			fmt.Println(j)
 		}
 		j++
@@ -57,21 +71,8 @@ func main() {
 	store.UpdateIndex()
 	fmt.Println("Index created in", time.Now().Sub(startIndex).Round(time.Millisecond))
 
-	// fmt.Println("Update indexes")
-	// startIndex := time.Now()
-	// store.UpdateIndex()
-	// fmt.Println("Undex updated in", time.Now().Sub(startIndex).Round(time.Millisecond))
-
 	// fmt.Println("Update country cities")
 	// dicts.UpdateCountryCities(store)
-
-	fmt.Println("GOMAXPROCS =", runtime.GOMAXPROCS(-1))
-	fmt.Println("Run GC...")
-	runtime.GC()
-
-	gcPercent := 15
-	fmt.Println("SetGCPercent =", gcPercent)
-	debug.SetGCPercent(gcPercent)
 
 	// a := store.Get(uint32(rand.Int31n(30000)))
 	// fmt.Printf("Example = %+v, size = %db\n", a, unsafe.Sizeof(Account{}))
@@ -89,19 +90,10 @@ func main() {
 
 	fmt.Println("Start server")
 
-	server := NewServer(store, parser, dicts, &ServerOptions{
-		Addr: *addr,
-	})
+	// setGCPercent(25)
 
-	go func() {
-		for range time.Tick(5 * time.Second) {
-			fmt.Println("------------------------------------")
-			fmt.Println("Total accounts =", store.Count())
-			server.stats.Sort()
-			fmt.Println(server.stats.Format())
-			printMemUsage()
-		}
-	}()
+	fmt.Println("Run GC...")
+	runtime.GC()
 
 	err := server.Handle()
 	if err != nil {
@@ -109,7 +101,7 @@ func main() {
 	}
 }
 
-func readOptions(filename string, store *Store) {
+func readOptions(filename string) (uint32, bool) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal(err)
@@ -122,13 +114,21 @@ func readOptions(filename string, store *Store) {
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	ui64, err := strconv.ParseUint(strings.TrimSpace(line), 10, 64)
+	ui64, err := strconv.ParseUint(strings.TrimSpace(line), 10, 32)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	store.SetNow(uint32(ui64))
+	line, err = reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		log.Fatal(err)
+	}
+	rating, err := strconv.ParseUint(strings.TrimSpace(line), 10, 1)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return uint32(ui64), rating == 1
 }
 
 func readArchive(filename string, parser *Parser, store *Store) {
@@ -165,4 +165,18 @@ func parseFile(reader io.ReadCloser, parser *Parser, store *Store) {
 			log.Fatal(errors.Wrap(err, "Can not add account"))
 		}
 	}
+}
+
+func printAppStatus(store *Store, server *Server) {
+	fmt.Println("------------------------------------")
+	fmt.Println("Total accounts =", store.Count())
+	server.stats.Sort()
+	fmt.Println(server.stats.Format())
+	printMemUsage()
+	fmt.Println("------------------------------------")
+}
+
+func setGCPercent(gcPercent int) {
+	fmt.Println("SetGCPercent =", gcPercent)
+	debug.SetGCPercent(gcPercent)
 }

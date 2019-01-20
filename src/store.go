@@ -10,7 +10,7 @@ type Store struct {
 	parser                    *Parser
 	dicts                     *Dicts
 	now                       uint32
-	test                      bool
+	rating                    bool
 	accounts                  map[ID]*Account
 	emails                    map[string]ID
 	rwLock                    sync.RWMutex
@@ -32,10 +32,11 @@ type Store struct {
 	indexInterestRelationship *IndexInterestRelationship
 }
 
-func NewStore(parser *Parser, dicts *Dicts) *Store {
+func NewStore(dicts *Dicts, now uint32, rating bool) *Store {
 	return &Store{
-		parser:                    parser,
 		dicts:                     dicts,
+		now:                       now,
+		rating:                    rating,
 		accounts:                  make(map[ID]*Account),
 		emails:                    make(map[string]ID),
 		indexID:                   NewIndexID(10000),
@@ -55,14 +56,6 @@ func NewStore(parser *Parser, dicts *Dicts) *Store {
 		indexInterestComplicated:  NewIndexInterestComplicated(),
 		indexInterestRelationship: NewIndexInterestRelationship(),
 	}
-}
-
-func (store *Store) SetNow(now uint32) {
-	store.now = now
-}
-
-func (store *Store) GetNow() uint32 {
-	return store.now
 }
 
 func (store *Store) Count() uint32 {
@@ -127,7 +120,7 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 
 	if rawAccount.Phone != nil {
 		account.Phone = rawAccount.Phone
-		account.PhoneCode = rawAccount.PhoneCode
+		account.PhoneCode = *rawAccount.PhoneCode
 	}
 
 	if rawAccount.Fname != nil {
@@ -146,8 +139,15 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
 	}
 
-	for _, like := range rawAccount.Likes {
-		store.indexLikee.Add(ID(like.ID), ID(account.ID))
+	if len(rawAccount.Likes) > 0 {
+		for _, like := range rawAccount.Likes {
+			account.AppendLike(&AccountLike{
+				ID: ID(like.ID),
+				Ts: like.Ts,
+			})
+			store.indexLikee.Add(ID(like.ID), ID(account.ID))
+		}
+		account.SortLikes()
 	}
 
 	for _, interestStr := range rawAccount.Interests {
@@ -169,7 +169,7 @@ func (store *Store) AddToIndex(account *Account) {
 	store.indexBirthYear.Add(timestampToYear(account.Birth), account.ID)
 	store.indexJoinedYear.Add(timestampToYear(int64(account.Joined)), account.ID)
 	if account.Phone != nil {
-		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
+		store.indexPhoneCode.Add(account.PhoneCode, account.ID)
 	} else {
 		store.indexPhoneCode.Add(0, account.ID)
 	}
@@ -214,7 +214,7 @@ func (store *Store) AppendToIndex(account *Account) {
 	store.indexCountry.Append(account.Country, account.ID)
 	store.indexCity.Append(account.City, account.ID)
 	if account.Phone != nil {
-		store.indexPhoneCode.Append(*account.PhoneCode, account.ID)
+		store.indexPhoneCode.Append(account.PhoneCode, account.ID)
 	} else {
 		store.indexPhoneCode.Append(0, account.ID)
 	}
@@ -288,6 +288,13 @@ func (store *Store) AddLikes(rawLikes []*Like, updateIndexes bool) error {
 	}
 
 	for _, rawLike := range rawLikes {
+		store.rwLock.RLock()
+		liker := store.accounts[ID(rawLike.Liker)]
+		store.rwLock.RUnlock()
+		liker.AddLike(&AccountLike{
+			ID: ID(rawLike.Likee),
+			Ts: rawLike.Ts,
+		})
 		store.indexLikee.Add(ID(rawLike.Likee), ID(rawLike.Liker))
 	}
 
@@ -372,16 +379,16 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		oldBirth := rawAccount.Birth
 		account.Birth = rawAccount.Birth
 		store.indexBirthYear.Remove(timestampToYear(oldBirth), ID(account.ID))
-		newYear := timestampToYear(account.Birth)
+		newYear := timestampToYear(rawAccount.Birth)
 		store.indexBirthYear.Add(newYear, ID(account.ID))
 	}
-	if rawAccount.Joined != 0 {
-		oldBirth := rawAccount.Birth
-		account.Birth = rawAccount.Birth
-		store.indexBirthYear.Remove(timestampToYear(oldBirth), ID(account.ID))
-		newYear := timestampToYear(account.Birth)
-		store.indexBirthYear.Add(newYear, ID(account.ID))
-	}
+	// if rawAccount.Joined != 0 {
+	// 	oldJoined := rawAccount.Joined
+	// 	account.Joined = uint32(rawAccount.Joined)
+	// 	store.indexJoinedYear.Remove(timestampToYear(int64(oldJoined)), ID(account.ID))
+	// 	newYear := timestampToYear(int64(account.Joined))
+	// 	store.indexJoinedYear.Add(newYear, ID(account.ID))
+	// }
 	if rawAccount.Email != "" && account.Email != rawAccount.Email {
 		oldEmail := account.Email
 		account.Email = rawAccount.Email
@@ -393,17 +400,17 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	}
 	if rawAccount.Phone != nil && (account.Phone == nil || *account.Phone != *rawAccount.Phone) {
 		account.Phone = rawAccount.Phone
-		if account.PhoneCode != nil {
-			store.indexPhoneCode.Remove(*account.PhoneCode, account.ID)
+		if account.PhoneCode != 0 {
+			store.indexPhoneCode.Remove(account.PhoneCode, account.ID)
 		}
-		account.PhoneCode = rawAccount.PhoneCode
-		store.indexPhoneCode.Add(*account.PhoneCode, account.ID)
+		account.PhoneCode = *rawAccount.PhoneCode
+		store.indexPhoneCode.Add(account.PhoneCode, account.ID)
 	}
-	if len(rawAccount.Likes) > 0 {
-		for _, like := range rawAccount.Likes {
-			store.indexLikee.Add(ID(like.ID), account.ID)
-		}
-	}
+	// if len(rawAccount.Likes) > 0 {
+	// 	for _, like := range rawAccount.Likes {
+	// 		store.indexLikee.Add(ID(like.ID), account.ID)
+	// 	}
+	// }
 	if rawAccount.Fname != nil {
 		oldFname := account.Fname
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)

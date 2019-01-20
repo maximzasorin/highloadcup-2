@@ -1,5 +1,10 @@
 package main
 
+import (
+	"sort"
+	"sync"
+)
+
 const (
 	StatusSingleString            = "свободны"
 	StatusComplicatedString       = "всё сложно"
@@ -24,6 +29,8 @@ type AccountLike struct {
 	Ts uint32
 }
 
+type AccountLikes []AccountLike
+
 type Account struct {
 	ID          ID
 	Sex         byte
@@ -33,14 +40,34 @@ type Account struct {
 	Country     Country // optional
 	City        City    // optional
 	EmailDomain uint8
+	PhoneCode   uint16 // optional
 	Birth       int64
 	Joined      uint32
-	PhoneCode   *uint16 // optional
 	Phone       *string // optional
 	Email       string
 	Premium     *Premium // optional
 	Interests   []Interest
-	Likes       []AccountLike
+	Likes       AccountLikes
+	rwLock      sync.RWMutex
+}
+
+func (account *Account) AddLike(accountLike *AccountLike) {
+	account.rwLock.Lock()
+	account.Likes = append(account.Likes, *accountLike)
+	sort.Sort(account.Likes)
+	account.rwLock.Unlock()
+}
+
+func (account *Account) AppendLike(accountLike *AccountLike) {
+	account.rwLock.Lock()
+	account.Likes = append(account.Likes, *accountLike)
+	account.rwLock.Unlock()
+}
+
+func (account *Account) SortLikes() {
+	account.rwLock.Lock()
+	sort.Sort(account.Likes)
+	account.rwLock.Unlock()
 }
 
 type Like struct {
@@ -71,4 +98,16 @@ type RawAccount struct {
 	Premium     *Premium // optional
 	Interests   []string
 	Likes       []RawLike
+}
+
+func (al AccountLikes) Len() int {
+	return len(al)
+}
+
+func (al AccountLikes) Swap(i, j int) {
+	al[i], al[j] = al[j], al[i]
+}
+
+func (al AccountLikes) Less(i, j int) bool {
+	return al[i].ID > al[j].ID
 }

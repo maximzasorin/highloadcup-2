@@ -279,30 +279,30 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 	return allPairs
 }
 
-type RecommendPair struct {
-	account     *Account
-	compability uint64
-}
+// type RecommendPair struct {
+// 	account     *Account
+// 	compability uint64
+// }
 
 type RecommendPairs struct {
-	store   *Store
-	account *Account
-	pairs   []*RecommendPair
+	store     *Store
+	account   *Account
+	pairs     []*Account
+	pairComps []uint64
 }
 
 func NewRecommendPairs(store *Store, account *Account, capacity int) *RecommendPairs {
 	return &RecommendPairs{
-		store:   store,
-		account: account,
-		pairs:   make([]*RecommendPair, 0, capacity),
+		store:     store,
+		account:   account,
+		pairs:     make([]*Account, 0, capacity),
+		pairComps: make([]uint64, 0, capacity),
 	}
 }
 
 func (ra *RecommendPairs) AddPair(pair *Account) {
-	ra.pairs = append(ra.pairs, &RecommendPair{
-		account:     pair,
-		compability: Compability(ra.account, pair),
-	})
+	ra.pairs = append(ra.pairs, pair)
+	ra.pairComps = append(ra.pairComps, Compability(ra.account, pair))
 }
 
 func (ra *RecommendPairs) Sort() {
@@ -310,14 +310,18 @@ func (ra *RecommendPairs) Sort() {
 }
 
 func (ra *RecommendPairs) Get(limit int) []*Account {
-	res := make([]*Account, 0)
-	for _, rp := range ra.pairs {
-		res = append(res, rp.account)
-		if len(res) >= limit {
-			break
-		}
+	if len(ra.pairs) > limit {
+		return ra.pairs[:limit]
 	}
-	return res
+	return ra.pairs
+	// res := make([]*Account, 0)
+	// for _, rp := range ra.pairs {
+	// 	res = append(res, rp.account)
+	// 	if len(res) >= limit {
+	// 		break
+	// 	}
+	// }
+	// return res
 }
 
 func (ra *RecommendPairs) Len() int {
@@ -326,10 +330,11 @@ func (ra *RecommendPairs) Len() int {
 
 func (ra *RecommendPairs) Swap(i, j int) {
 	ra.pairs[i], ra.pairs[j] = ra.pairs[j], ra.pairs[i]
+	ra.pairComps[i], ra.pairComps[j] = ra.pairComps[j], ra.pairComps[i]
 }
 
 func (ra *RecommendPairs) Less(i, j int) bool {
-	return ra.pairs[i].compability > ra.pairs[j].compability
+	return ra.pairComps[i] > ra.pairComps[j]
 	// a := ra.pairs[i]
 	// b := ra.pairs[j]
 
