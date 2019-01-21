@@ -87,7 +87,7 @@ func (server *Server) Handle() error {
 	// 		params = append([]string{"keys:[" + keys[0] + "]"}, params...)
 	// 	}
 	// 	paramsStr := strings.Join(params, ",")
-	// 	server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
+	// server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
 	// })
 
 	handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
@@ -156,8 +156,8 @@ func (server *Server) Handle() error {
 				return
 			}
 
-			account, ok := server.store.Get(ID(ui64))
-			if !ok {
+			account := server.store.Get(ID(ui64))
+			if account == nil {
 				writer.WriteHeader(http.StatusNotFound)
 				return
 			}
@@ -194,8 +194,8 @@ func (server *Server) Handle() error {
 				return
 			}
 
-			account, ok := server.store.Get(ID(ui64))
-			if !ok {
+			account := server.store.Get(ID(ui64))
+			if account == nil {
 				writer.WriteHeader(http.StatusNotFound)
 				return
 			}
@@ -232,8 +232,8 @@ func (server *Server) Handle() error {
 				return
 			}
 
-			account, ok := server.store.Get(ID(ui64))
-			if !ok {
+			account := server.store.Get(ID(ui64))
+			if account == nil {
 				writer.WriteHeader(http.StatusNotFound)
 				return
 			}

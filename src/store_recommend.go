@@ -33,7 +33,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 			if account.ID == id {
 				continue
 			}
-			pair := store.accounts[id]
+			pair := store.get(id)
 			if account.Sex == pair.Sex {
 				continue
 			}
@@ -62,7 +62,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 			if account.ID == id {
 				continue
 			}
-			pair := store.accounts[id]
+			pair := store.get(id)
 			if account.Sex == pair.Sex {
 				continue
 			}
@@ -96,7 +96,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 			// if account.Sex == pair.Sex {
 			// 	continue
 			// }
-			recommendPairs.AddPair(store.accounts[id])
+			recommendPairs.AddPair(store.get(id))
 		}
 
 		recommendPairs.Sort()
@@ -126,7 +126,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 			// if account.Sex == pair.Sex {
 			// 	continue
 			// }
-			recommendPairs.AddPair(store.accounts[id])
+			recommendPairs.AddPair(store.get(id))
 		}
 
 		recommendPairs.Sort()
@@ -157,7 +157,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 			// if account.Sex == pair.Sex {
 			// 	continue
 			// }
-			recommendPairs.AddPair(store.accounts[id])
+			recommendPairs.AddPair(store.get(id))
 		}
 
 		recommendPairs.Sort()
@@ -192,7 +192,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 		if account.ID == id {
 			continue
 		}
-		pair := store.accounts[id]
+		pair := store.get(id)
 		if account.Sex == pair.Sex {
 			continue
 		}
@@ -228,7 +228,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 		if account.ID == id {
 			continue
 		}
-		pair := store.accounts[id]
+		pair := store.get(id)
 		if account.Sex == pair.Sex {
 			continue
 		}
@@ -264,7 +264,7 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 		if account.ID == id {
 			continue
 		}
-		pair := store.accounts[id]
+		pair := store.get(id)
 		if account.Sex == pair.Sex {
 			continue
 		}

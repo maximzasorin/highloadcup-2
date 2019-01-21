@@ -60,14 +60,15 @@ func main() {
 	fmt.Println("Create indexes")
 	startIndex := time.Now()
 	j := 1
-	for _, account := range store.GetAll() {
+	store.Iterate(func(account *Account) bool {
 		store.AppendToIndex(account)
 		if j%10000 == 0 {
 			printAppStatus(store, server)
 			fmt.Println(j)
 		}
 		j++
-	}
+		return true
+	})
 	store.UpdateIndex()
 	fmt.Println("Index created in", time.Now().Sub(startIndex).Round(time.Millisecond))
 

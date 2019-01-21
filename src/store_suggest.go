@@ -26,7 +26,7 @@ func (store *Store) SuggestAll(account *Account, suggest *Suggest) []*Account {
 
 	similarLikers := NewSimilarLikers(store, account, len(ids))
 	for _, id := range ids {
-		liker := store.accounts[id]
+		liker := store.get(id)
 		if account.Sex != liker.Sex {
 			continue
 		}
@@ -76,7 +76,7 @@ func (store *Store) SuggestAll(account *Account, suggest *Suggest) []*Account {
 	// sort.Sort(suggestIDs)
 
 	for _, suggestID := range suggestIDs {
-		suggestAccounts = append(suggestAccounts, store.accounts[suggestID])
+		suggestAccounts = append(suggestAccounts, store.get(suggestID))
 		if len(suggestAccounts) >= suggest.Limit {
 			break
 		}

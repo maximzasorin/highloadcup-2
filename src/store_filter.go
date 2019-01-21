@@ -15,7 +15,7 @@ func (store *Store) FilterAll(filter *Filter) []*Account {
 	// scan all
 	count := uint8(1)
 	for _, id := range store.findIds(filter) {
-		account := store.accounts[id]
+		account := store.get(id)
 
 		if !filter.NoFilter && !store.filterAccount(account, filter) {
 			continue

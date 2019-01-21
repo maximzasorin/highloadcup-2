@@ -6,12 +6,18 @@ import (
 	"sync"
 )
 
+const (
+	storePreallocCount = 1000*1000 + 330*1000
+)
+
 type Store struct {
 	parser                    *Parser
 	dicts                     *Dicts
+	count                     ID
 	now                       uint32
 	rating                    bool
-	accounts                  map[ID]*Account
+	accountsMap               map[ID]*Account
+	accountsArr               []Account
 	emails                    map[string]ID
 	rwLock                    sync.RWMutex
 	indexID                   *IndexID
@@ -37,9 +43,10 @@ func NewStore(dicts *Dicts, now uint32, rating bool) *Store {
 		dicts:                     dicts,
 		now:                       now,
 		rating:                    rating,
-		accounts:                  make(map[ID]*Account),
+		accountsMap:               make(map[ID]*Account),
+		accountsArr:               make([]Account, storePreallocCount),
 		emails:                    make(map[string]ID),
-		indexID:                   NewIndexID(10000),
+		indexID:                   NewIndexID(storePreallocCount),
 		indexLikee:                NewIndexLikee(),
 		indexInterest:             NewIndexInterest(),
 		indexCity:                 NewIndexCity(),
@@ -56,10 +63,6 @@ func NewStore(dicts *Dicts, now uint32, rating bool) *Store {
 		indexInterestComplicated:  NewIndexInterestComplicated(),
 		indexInterestRelationship: NewIndexInterestRelationship(),
 	}
-}
-
-func (store *Store) Count() uint32 {
-	return uint32(len(store.accounts))
 }
 
 func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) (*Account, error) {
@@ -92,29 +95,43 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 		}
 	}
 
-	account := Account{
-		ID:          ID(rawAccount.ID),
-		Sex:         rawAccount.Sex,
-		Status:      rawAccount.Status,
-		Birth:       rawAccount.Birth,
-		Joined:      rawAccount.Joined,
-		Premium:     rawAccount.Premium,
-		Email:       rawAccount.Email,
-		EmailDomain: rawAccount.EmailDomain,
-	}
-
 	store.rwLock.Lock()
 	if check {
-		if _, ok := store.emails[account.Email]; ok {
+		if _, ok := store.emails[rawAccount.Email]; ok {
 			store.rwLock.Unlock()
 			return nil, errors.New("Same email already taken")
 		}
-		if _, ok := store.accounts[account.ID]; ok {
+		if store.get(ID(rawAccount.ID)) != nil {
 			store.rwLock.Unlock()
 			return nil, errors.New("Account with same ID already exists")
 		}
 	}
-	store.accounts[account.ID] = &account
+	var account *Account
+	if rawAccount.ID < storePreallocCount {
+		store.accountsArr[rawAccount.ID] = Account{
+			ID:          ID(rawAccount.ID),
+			Sex:         rawAccount.Sex,
+			Status:      rawAccount.Status,
+			Birth:       rawAccount.Birth,
+			Joined:      rawAccount.Joined,
+			Premium:     rawAccount.Premium,
+			Email:       rawAccount.Email,
+			EmailDomain: rawAccount.EmailDomain,
+		}
+		account = &store.accountsArr[rawAccount.ID]
+	} else {
+		store.accountsMap[ID(rawAccount.ID)] = &Account{
+			ID:          ID(rawAccount.ID),
+			Sex:         rawAccount.Sex,
+			Status:      rawAccount.Status,
+			Birth:       rawAccount.Birth,
+			Joined:      rawAccount.Joined,
+			Premium:     rawAccount.Premium,
+			Email:       rawAccount.Email,
+			EmailDomain: rawAccount.EmailDomain,
+		}
+		account = store.accountsMap[ID(rawAccount.ID)]
+	}
 	store.emails[account.Email] = account.ID
 	store.rwLock.Unlock()
 
@@ -156,10 +173,12 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 	}
 
 	if updateIndexes {
-		store.AddToIndex(&account)
+		store.AddToIndex(account)
 	}
 
-	return &account, nil
+	store.count++
+
+	return account, nil
 }
 
 func (store *Store) AddToIndex(account *Account) {
@@ -272,24 +291,22 @@ func (store *Store) AddLikes(rawLikes []*Like, updateIndexes bool) error {
 	// 	return errors.New("No likes founded")
 	// }
 
+	store.rwLock.RLock()
 	for _, rawLike := range rawLikes {
-		store.rwLock.RLock()
-		_, ok := store.accounts[ID(rawLike.Likee)]
-		store.rwLock.RUnlock()
-		if !ok {
+		if store.get(ID(rawLike.Likee)) == nil {
+			store.rwLock.RUnlock()
 			return errors.New("Cannot find likee account")
 		}
-		store.rwLock.RLock()
-		_, ok = store.accounts[ID(rawLike.Liker)]
-		store.rwLock.RUnlock()
-		if !ok {
+		if store.get(ID(rawLike.Liker)) == nil {
+			store.rwLock.RUnlock()
 			return errors.New("Cannot find liker account")
 		}
 	}
+	store.rwLock.RUnlock()
 
 	for _, rawLike := range rawLikes {
 		store.rwLock.RLock()
-		liker := store.accounts[ID(rawLike.Liker)]
+		liker := store.get(ID(rawLike.Liker))
 		store.rwLock.RUnlock()
 		liker.AddLike(&AccountLike{
 			ID: ID(rawLike.Likee),
@@ -311,11 +328,12 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		store.rwLock.RUnlock()
 		return nil, errors.New("Same email already taken")
 	}
-	account, ok := store.accounts[id]
-	store.rwLock.RUnlock()
-	if !ok {
+	account := store.get(id)
+	if account == nil {
+		store.rwLock.RUnlock()
 		return nil, errors.New("Unknwon account for update")
 	}
+	store.rwLock.RUnlock()
 	if rawAccount.Premium != nil {
 		account.Premium = rawAccount.Premium
 		if store.PremiumNow(account) {
@@ -511,13 +529,46 @@ func (store *Store) PremiumNow(account *Account) bool {
 	return account.Premium.Start < store.now && store.now < account.Premium.Finish
 }
 
-func (store *Store) Get(id ID) (*Account, bool) {
+func (store *Store) Get(id ID) *Account {
 	store.rwLock.RLock()
-	account, ok := store.accounts[id]
+	account := store.get(id)
 	store.rwLock.RUnlock()
-	return account, ok
+	return account
 }
 
-func (store *Store) GetAll() map[ID]*Account {
-	return store.accounts
+func (store *Store) Count() int {
+	return int(store.count)
 }
+
+func (store *Store) get(id ID) *Account {
+	if id < storePreallocCount {
+		if store.accountsArr[id].ID == id {
+			return &store.accountsArr[id]
+		}
+	} else {
+		if account, ok := store.accountsMap[id]; ok {
+			return account
+		}
+	}
+	return nil
+}
+
+func (store *Store) Iterate(iterator func(*Account) bool) {
+	for _, account := range store.accountsArr {
+		if account.ID == 0 {
+			continue
+		}
+		if !iterator(&account) {
+			return
+		}
+	}
+	for _, account := range store.accountsMap {
+		if !iterator(account) {
+			return
+		}
+	}
+}
+
+// func (store *Store) GetAll() map[ID]*Account {
+// 	return store.accounts
+// }
