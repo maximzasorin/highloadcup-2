@@ -55,7 +55,7 @@ func NewStore(dicts *Dicts, now uint32, rating bool) *Store {
 		indexCountry:              NewIndexCountry(),
 		indexFname:                NewIndexFname(),
 		indexPhoneCode:            NewIndexPhoneCode(),
-		indexGroup:                NewIndexGroup(),
+		indexGroup:                NewIndexGroup(dicts),
 		indexSex:                  NewIndexSex(),
 		indexStatus:               NewIndexStatus(),
 		indexInterestPremium:      NewIndexInterestPremium(),
@@ -221,6 +221,8 @@ func (store *Store) AddToIndex(account *Account) {
 			}
 		}
 	}
+
+	store.indexGroup.AddHash(CreateHashFromAccount(account), account.Interests...)
 }
 
 func (store *Store) AppendToIndex(account *Account) {
@@ -253,7 +255,7 @@ func (store *Store) AppendToIndex(account *Account) {
 			}
 		}
 	}
-	// store.indexGroup.Add(account)
+	store.indexGroup.Append(account)
 }
 
 func (store *Store) UpdateIndex() {
@@ -271,6 +273,7 @@ func (store *Store) UpdateIndex() {
 	store.indexInterestSingle.UpdateAll()
 	store.indexInterestComplicated.UpdateAll()
 	store.indexInterestRelationship.UpdateAll()
+	store.indexGroup.UpdateAll()
 
 	fmt.Println("total birth years =", store.indexBirthYear.Len())
 	fmt.Println("total joined years =", store.indexJoinedYear.Len())
@@ -279,10 +282,14 @@ func (store *Store) UpdateIndex() {
 	fmt.Println("total cities =", store.indexCity.Len())
 	fmt.Println("total phone codes =", store.indexPhoneCode.Len())
 	fmt.Println("total interests =", store.indexInterest.Len())
-	fmt.Println("total entries =", store.indexGroup.Len())
 
-	// for fields, entries := range store.indexGroup.entries {
-	// 	fmt.Println(fields, len(entries))
+	// fmt.Println("total group entries =", len(store.indexGroup.entries))
+	// for filter, groups := range store.indexGroup.entries {
+	// 	for group := range groups {
+	// 		for filterVal, entries := range groups[group] {
+	// 			fmt.Printf("%b x %b x %b: %d\n", filter, group, filterVal, entries.Len())
+	// 		}
+	// 	}
 	// }
 }
 
@@ -334,6 +341,14 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		return nil, errors.New("Unknwon account for update")
 	}
 	store.rwLock.RUnlock()
+
+	oldHash := CreateHashFromAccount(account)
+	oldInts := make([]Interest, len(account.Interests))
+	for i, interest := range account.Interests {
+		oldInts[i] = interest
+	}
+	// store.indexGroup.Sub(account)
+
 	if rawAccount.Premium != nil {
 		account.Premium = rawAccount.Premium
 		if store.PremiumNow(account) {
@@ -400,13 +415,6 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		newYear := timestampToYear(rawAccount.Birth)
 		store.indexBirthYear.Add(newYear, ID(account.ID))
 	}
-	// if rawAccount.Joined != 0 {
-	// 	oldJoined := rawAccount.Joined
-	// 	account.Joined = uint32(rawAccount.Joined)
-	// 	store.indexJoinedYear.Remove(timestampToYear(int64(oldJoined)), ID(account.ID))
-	// 	newYear := timestampToYear(int64(account.Joined))
-	// 	store.indexJoinedYear.Add(newYear, ID(account.ID))
-	// }
 	if rawAccount.Email != "" && account.Email != rawAccount.Email {
 		oldEmail := account.Email
 		account.Email = rawAccount.Email
@@ -424,11 +432,6 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		account.PhoneCode = *rawAccount.PhoneCode
 		store.indexPhoneCode.Add(account.PhoneCode, account.ID)
 	}
-	// if len(rawAccount.Likes) > 0 {
-	// 	for _, like := range rawAccount.Likes {
-	// 		store.indexLikee.Add(ID(like.ID), account.ID)
-	// 	}
-	// }
 	if rawAccount.Fname != nil {
 		oldFname := account.Fname
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
@@ -519,6 +522,12 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 		}
 	}
 
+	func() {
+		store.indexGroup.SubHash(oldHash, oldInts...)
+		store.indexGroup.AddHash(CreateHashFromAccount(account), account.Interests...)
+	}()
+	// store.indexGroup.Add(account)
+
 	return account, nil
 }
 
@@ -568,7 +577,3 @@ func (store *Store) Iterate(iterator func(*Account) bool) {
 		}
 	}
 }
-
-// func (store *Store) GetAll() map[ID]*Account {
-// 	return store.accounts
-// }

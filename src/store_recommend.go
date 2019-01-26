@@ -314,14 +314,6 @@ func (ra *RecommendPairs) Get(limit int) []*Account {
 		return ra.pairs[:limit]
 	}
 	return ra.pairs
-	// res := make([]*Account, 0)
-	// for _, rp := range ra.pairs {
-	// 	res = append(res, rp.account)
-	// 	if len(res) >= limit {
-	// 		break
-	// 	}
-	// }
-	// return res
 }
 
 func (ra *RecommendPairs) Len() int {
@@ -335,78 +327,4 @@ func (ra *RecommendPairs) Swap(i, j int) {
 
 func (ra *RecommendPairs) Less(i, j int) bool {
 	return ra.pairComps[i] > ra.pairComps[j]
-	// a := ra.pairs[i]
-	// b := ra.pairs[j]
-
-	// intsA := 0
-	// intsB := 0
-	// for _, interest := range ra.account.Interests {
-	// 	for _, intA := range a.Interests {
-	// 		if intA == interest {
-	// 			intsA++
-	// 		}
-	// 	}
-	// 	for _, intB := range b.Interests {
-	// 		if intB == interest {
-	// 			intsB++
-	// 		}
-	// 	}
-	// }
-
-	// if ra.store.PremiumNow(a) && !ra.store.PremiumNow(b) {
-	// 	return true
-	// }
-	// if !ra.store.PremiumNow(a) && ra.store.PremiumNow(b) {
-	// 	return false
-	// }
-
-	// // compA := Compability(ra.account, a)
-	// // compB := Compability(ra.account, b)
-
-	// // if compA > compB {
-	// // 	return true
-	// // }
-
-	// // if compB < compA {
-	// // 	return false
-	// // }
-
-	// if a.Status != b.Status {
-	// 	if a.Status == StatusSingle {
-	// 		return true
-	// 	}
-	// 	if b.Status == StatusSingle {
-	// 		return false
-	// 	}
-	// 	if a.Status == StatusComplicated {
-	// 		return true
-	// 	}
-	// 	if b.Status == StatusComplicated {
-	// 		return false
-	// 	}
-	// }
-
-	// if intsA > intsB {
-	// 	return true
-	// }
-	// if intsA < intsB {
-	// 	return false
-	// }
-
-	// diffA := ra.account.Birth - a.Birth
-	// if diffA < 0 {
-	// 	diffA = -diffA
-	// }
-	// diffB := ra.account.Birth - b.Birth
-	// if diffB < 0 {
-	// 	diffB = -diffB
-	// }
-	// if diffA < diffB {
-	// 	return true
-	// }
-	// if diffA > diffB {
-	// 	return false
-	// }
-
-	// return a.ID < b.ID
 }

@@ -118,7 +118,7 @@ func (parser *Parser) EncodeAccounts(accounts []*Account, fields SerializeFields
 	return buffer.Bytes()
 }
 
-func (parser *Parser) EncodeGroupEntries(groupEntries []*GroupEntry) []byte {
+func (parser *Parser) EncodeGroupEntries(groupEntries []*GroupEntry, orderAsc bool) []byte {
 	buffer := bytes.NewBuffer([]byte(``))
 
 	enc := gojay.NewEncoder(buffer)
@@ -126,8 +126,14 @@ func (parser *Parser) EncodeGroupEntries(groupEntries []*GroupEntry) []byte {
 
 	enc.Encode(gojay.EncodeObjectFunc(func(enc *gojay.Encoder) {
 		enc.AddArrayKey("groups", gojay.EncodeArrayFunc(func(enc *gojay.Encoder) {
-			for _, groupEntry := range groupEntries {
-				enc.Object(parser.EncodeGroupFunc(groupEntry))
+			if orderAsc {
+				for _, groupEntry := range groupEntries {
+					enc.Object(parser.EncodeGroupFunc(groupEntry))
+				}
+			} else {
+				for i := len(groupEntries) - 1; i >= 0; i-- {
+					enc.Object(parser.EncodeGroupFunc(groupEntries[i]))
+				}
 			}
 		}))
 	}))
@@ -371,16 +377,16 @@ func (parser *Parser) AccountEncodeFunc(account *Account, fields SerializeFields
 
 func (parser *Parser) EncodeGroupFunc(groupEntry *GroupEntry) gojay.EncodeObjectFunc {
 	return gojay.EncodeObjectFunc(func(enc *gojay.Encoder) {
-		if groupEntry.Sex != 0 {
-			if groupEntry.Sex == SexFemale {
+		if groupEntry.GetSex() != 0 {
+			if groupEntry.GetSex() == SexFemale {
 				enc.AddStringKey("sex", "f")
 			} else {
 				enc.AddStringKey("sex", "m")
 			}
 		}
 
-		if groupEntry.Status != 0 {
-			switch groupEntry.Status {
+		if groupEntry.GetStatus() != 0 {
+			switch groupEntry.GetStatus() {
 			case StatusSingle:
 				enc.AddStringKey("status", StatusSingleString)
 			case StatusRelationship:
@@ -390,8 +396,8 @@ func (parser *Parser) EncodeGroupFunc(groupEntry *GroupEntry) gojay.EncodeObject
 			}
 		}
 
-		if groupEntry.Interest != 0 {
-			interestStr, err := parser.dicts.GetInterestString(groupEntry.Interest)
+		if groupEntry.GetInterest() != 0 {
+			interestStr, err := parser.dicts.GetInterestString(groupEntry.GetInterest())
 			if err != nil {
 				// enc.AddNullKey("interests")
 			} else {
@@ -399,8 +405,8 @@ func (parser *Parser) EncodeGroupFunc(groupEntry *GroupEntry) gojay.EncodeObject
 			}
 		}
 
-		if groupEntry.Country != 0 {
-			countryStr, err := parser.dicts.GetCountryString(groupEntry.Country)
+		if groupEntry.GetCountry() != 0 {
+			countryStr, err := parser.dicts.GetCountryString(groupEntry.GetCountry())
 			if err != nil {
 				// enc.AddNullKey("country")
 			} else {
@@ -408,8 +414,8 @@ func (parser *Parser) EncodeGroupFunc(groupEntry *GroupEntry) gojay.EncodeObject
 			}
 		}
 
-		if groupEntry.City != 0 {
-			cityStr, err := parser.dicts.GetCityString(groupEntry.City)
+		if groupEntry.GetCity() != 0 {
+			cityStr, err := parser.dicts.GetCityString(groupEntry.GetCity())
 			if err != nil {
 				// enc.AddNullKey("city")
 			} else {

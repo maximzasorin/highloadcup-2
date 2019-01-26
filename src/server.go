@@ -60,35 +60,40 @@ func (server *Server) Handle() error {
 		// server.stats.Add(ServerStatsGetFilter, params, startTime)
 	})
 
-	// handleRouteGet("/accounts/group/", func(writer http.ResponseWriter, request *http.Request) {
-	// 	startTime := time.Now()
+	handleRouteGet("/accounts/group/", func(writer http.ResponseWriter, request *http.Request) {
+		// startTime := time.Now()
 
-	// 	group := NewGroup(server.parser, server.dicts)
-	// 	err := group.Parse(request.URL.RawQuery)
-	// 	if err != nil {
-	// 		// fmt.Println("Error group parsing query in", filter.QueryID)
-	// 		writer.WriteHeader(http.StatusBadRequest)
-	// 		return
-	// 	}
+		group := NewGroup(server.parser, server.dicts)
+		err := group.Parse(request.URL.RawQuery)
+		if err != nil {
+			// fmt.Println("Error group parsing query in", filter.QueryID)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
 
-	// 	// writer.WriteHeader(http.StatusOK)
-	// 	// writer.Write([]byte(`{"accounts":[]}`))
+		// writer.WriteHeader(http.StatusOK)
+		// writer.Write([]byte(`{"accounts":[]}`))
 
-	// 	groupEntries := server.store.GroupAll(group)
-	// 	encoded := server.parser.EncodeGroupEntries(groupEntries)
+		groupEntries, orderAsc := server.store.GroupAll(group)
+		encoded := server.parser.EncodeGroupEntries(groupEntries, orderAsc)
 
-	// 	writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-	// 	writer.WriteHeader(http.StatusOK)
-	// 	writer.Write(encoded)
+		writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
+		writer.WriteHeader(http.StatusOK)
+		writer.Write(encoded)
 
-	// 	params := getParams(request, []string{"limit", "query_id", "order", "keys"})
-	// 	keys, ok := request.URL.Query()["keys"]
-	// 	if ok {
-	// 		params = append([]string{"keys:[" + keys[0] + "]"}, params...)
-	// 	}
-	// 	paramsStr := strings.Join(params, ",")
-	// server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
-	// })
+		// params := getParams(request, []string{"limit", "query_id", "order", "keys"})
+		// keys, ok := request.URL.Query()["keys"]
+		// if ok {
+		// 	params = append([]string{"keys:[" + keys[0] + "]"}, params...)
+		// }
+		// paramsStr := strings.Join(params, ",")
+		// server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
+
+		// d := time.Now().Sub(startTime) / time.Microsecond
+		// if d > 1000 {
+		// 	fmt.Printf("long query = %s, %d mus\n", request.URL.RequestURI(), d)
+		// }
+	})
 
 	handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
 		// startTime := time.Now()

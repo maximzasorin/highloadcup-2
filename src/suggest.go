@@ -131,45 +131,6 @@ func Similarity(me *Account, account *Account) float64 {
 			}
 		}
 	}
-
-	// taked := make(map[ID]bool)
-	// for _, like := range me.Likes {
-	// 	if _, ok := taked[like.ID]; ok {
-	// 		continue
-	// 	}
-	// 	taked[like.ID] = true
-
-	// 	myTsTotal := uint64(like.Ts)
-	// 	myTsCount := uint64(1)
-	// 	for _, myLike := range me.Likes {
-	// 		if myLike.ID == like.ID {
-	// 			myTsTotal += uint64(myLike.Ts)
-	// 			myTsCount++
-	// 		}
-	// 	}
-	// 	anotherTsTotal := uint64(0)
-	// 	anotherTsCount := uint64(0)
-	// 	for _, anotherLike := range account.Likes {
-	// 		if anotherLike.ID == like.ID {
-	// 			anotherTsTotal += uint64(anotherLike.Ts)
-	// 			anotherTsCount++
-	// 		}
-	// 	}
-	// 	if myTsCount > 0 && anotherTsCount > 0 {
-	// 		myTs := float64(myTsTotal / myTsCount)
-	// 		anotherTs := float64(anotherTsTotal / anotherTsCount)
-
-	// 		dTs := myTs - anotherTs
-	// 		if dTs < 0 {
-	// 			dTs = -dTs
-	// 		}
-	// 		if dTs == 0 {
-	// 			similarity++
-	// 		} else {
-	// 			similarity += 1 / dTs
-	// 		}
-	// 	}
-	// }
 	return similarity
 }
 
