@@ -4,7 +4,7 @@ import (
 	"sort"
 )
 
-func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Account {
+func (store *Store) Recommend(account *Account, recommend *Recommend, accounts *AccountsBuffer) {
 	sex := byte(0)
 	if account.Sex == SexFemale {
 		sex = SexMale
@@ -12,21 +12,18 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 		sex = SexFemale
 	}
 	filter := &recommend.Filter
-	allPairs := make([]*Account, 0)
 
-	if len(account.Interests) == 0 || recommend.ExpectEmpty {
-		return allPairs
+	if len(account.Interests) == 0 || recommend.ExpectEmpty() {
+		return
 	}
 
-	if filter.City != nil {
+	if filter.City != 0 {
 		interestIndexes := make([]IDS, len(account.Interests))
 		for i, interest := range account.Interests {
-			interestIndexes[i] = store.indexInterestPremium.FindByCity(interest, *filter.City)
+			interestIndexes[i] = store.index.InterestPremium.FindByCity(interest, filter.City)
 		}
 
 		ids := UnionIndexes(interestIndexes...)
-
-		// fmt.Println("Founded =", len(ids))
 
 		recommendPairs := NewRecommendPairs(store, account, len(ids))
 		for _, id := range ids {
@@ -42,20 +39,18 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 		recommendPairs.Sort()
 
-		allPairs = recommendPairs.Get(recommend.Limit)
-
-		if len(allPairs) == recommend.Limit {
-			return allPairs
+		*accounts = (*accounts)[:len(recommendPairs.Get(recommend.Limit()))]
+		copy(*accounts, recommendPairs.Get(recommend.Limit()))
+		if len(*accounts) == recommend.Limit() {
+			return
 		}
-	} else if filter.Country != nil {
+	} else if filter.Country != 0 {
 		interestIndexes := make([]IDS, len(account.Interests))
 		for i, interest := range account.Interests {
-			interestIndexes[i] = store.indexInterestPremium.FindByCountry(interest, *filter.Country)
+			interestIndexes[i] = store.index.InterestPremium.FindByCountry(interest, filter.Country)
 		}
 
 		ids := UnionIndexes(interestIndexes...)
-
-		// fmt.Println("Founded =", len(ids))
 
 		recommendPairs := NewRecommendPairs(store, account, len(ids))
 		for _, id := range ids {
@@ -71,21 +66,19 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 		recommendPairs.Sort()
 
-		allPairs = recommendPairs.Get(recommend.Limit)
-
-		if len(allPairs) == recommend.Limit {
-			return allPairs
+		*accounts = (*accounts)[:len(recommendPairs.Get(recommend.Limit()))]
+		copy(*accounts, recommendPairs.Get(recommend.Limit()))
+		if len(*accounts) == recommend.Limit() {
+			return
 		}
 	} else {
 		// Single
 		interestIndexes := make([]IDS, len(account.Interests))
 		for i, interest := range account.Interests {
-			interestIndexes[i] = store.indexInterestPremium.FindByStatusSex(interest, StatusSingle, sex)
+			interestIndexes[i] = store.index.InterestPremium.FindByStatusSex(interest, StatusSingle, sex)
 		}
 
 		ids := UnionIndexes(interestIndexes...)
-
-		// fmt.Println("Founded =", len(ids))
 
 		recommendPairs := NewRecommendPairs(store, account, len(ids))
 		for _, id := range ids {
@@ -101,21 +94,19 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 		recommendPairs.Sort()
 
-		allPairs = recommendPairs.Get(recommend.Limit)
-
-		if len(allPairs) == recommend.Limit {
-			return allPairs
+		*accounts = (*accounts)[:len(recommendPairs.Get(recommend.Limit()))]
+		copy(*accounts, recommendPairs.Get(recommend.Limit()))
+		if len(*accounts) == recommend.Limit() {
+			return
 		}
 
 		// Complicated
 		interestIndexes = make([]IDS, len(account.Interests))
 		for i, interest := range account.Interests {
-			interestIndexes[i] = store.indexInterestPremium.FindByStatusSex(interest, StatusComplicated, sex)
+			interestIndexes[i] = store.index.InterestPremium.FindByStatusSex(interest, StatusComplicated, sex)
 		}
 
 		ids = UnionIndexes(interestIndexes...)
-
-		// fmt.Println("Founded =", len(ids))
 
 		recommendPairs = NewRecommendPairs(store, account, len(ids))
 		for _, id := range ids {
@@ -131,22 +122,20 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 		recommendPairs.Sort()
 
-		pairs := recommendPairs.Get(recommend.Limit - len(allPairs))
-		allPairs = append(allPairs, pairs...)
+		pairs := recommendPairs.Get(recommend.Limit() - len(*accounts))
+		*accounts = append(*accounts, pairs...)
 
-		if len(allPairs) == recommend.Limit {
-			return allPairs
+		if len(*accounts) == recommend.Limit() {
+			return
 		}
 
 		// Relationship
 		interestIndexes = make([]IDS, len(account.Interests))
 		for i, interest := range account.Interests {
-			interestIndexes[i] = store.indexInterestPremium.FindByStatusSex(interest, StatusRelationship, sex)
+			interestIndexes[i] = store.index.InterestPremium.FindByStatusSex(interest, StatusRelationship, sex)
 		}
 
 		ids = UnionIndexes(interestIndexes...)
-
-		// fmt.Println("Founded =", len(ids))
 
 		recommendPairs = NewRecommendPairs(store, account, len(ids))
 		for _, id := range ids {
@@ -162,11 +151,11 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 		recommendPairs.Sort()
 
-		pairs = recommendPairs.Get(recommend.Limit - len(allPairs))
-		allPairs = append(allPairs, pairs...)
+		pairs = recommendPairs.Get(recommend.Limit() - len(*accounts))
+		*accounts = append(*accounts, pairs...)
 
-		if len(allPairs) == recommend.Limit {
-			return allPairs
+		if len(*accounts) == recommend.Limit() {
+			return
 		}
 	}
 
@@ -174,18 +163,16 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 	interestIndexes := make([]IDS, len(account.Interests))
 	for i, interest := range account.Interests {
-		if filter.City != nil {
-			interestIndexes[i] = store.indexInterestSingle.FindByCity(interest, *filter.City)
-		} else if filter.Country != nil {
-			interestIndexes[i] = store.indexInterestSingle.FindByCountry(interest, *filter.Country)
+		if filter.City != 0 {
+			interestIndexes[i] = store.index.InterestSingle.FindByCity(interest, filter.City)
+		} else if filter.Country != 0 {
+			interestIndexes[i] = store.index.InterestSingle.FindByCountry(interest, filter.Country)
 		} else {
-			interestIndexes[i] = store.indexInterestSingle.Find(interest)
+			interestIndexes[i] = store.index.InterestSingle.Find(interest)
 		}
 	}
 
 	ids := UnionIndexes(interestIndexes...)
-
-	// fmt.Println("Founded =", len(ids))
 
 	recommendPairs := NewRecommendPairs(store, account, len(ids))
 	for _, id := range ids {
@@ -201,23 +188,23 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 	recommendPairs.Sort()
 
-	pairs := recommendPairs.Get(recommend.Limit - len(allPairs))
-	allPairs = append(allPairs, pairs...)
+	pairs := recommendPairs.Get(recommend.Limit() - len(*accounts))
+	*accounts = append(*accounts, pairs...)
 
-	if len(allPairs) == recommend.Limit {
-		return allPairs
+	if len(*accounts) == recommend.Limit() {
+		return
 	}
 
 	// complicated
 
 	interestIndexes = make([]IDS, len(account.Interests))
 	for i, interest := range account.Interests {
-		if filter.City != nil {
-			interestIndexes[i] = store.indexInterestComplicated.FindByCity(interest, *filter.City)
-		} else if filter.Country != nil {
-			interestIndexes[i] = store.indexInterestComplicated.FindByCountry(interest, *filter.Country)
+		if filter.City != 0 {
+			interestIndexes[i] = store.index.InterestComplicated.FindByCity(interest, filter.City)
+		} else if filter.Country != 0 {
+			interestIndexes[i] = store.index.InterestComplicated.FindByCountry(interest, filter.Country)
 		} else {
-			interestIndexes[i] = store.indexInterestComplicated.Find(interest)
+			interestIndexes[i] = store.index.InterestComplicated.Find(interest)
 		}
 	}
 
@@ -237,23 +224,23 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 	recommendPairs.Sort()
 
-	pairs = recommendPairs.Get(recommend.Limit - len(allPairs))
-	allPairs = append(allPairs, pairs...)
+	pairs = recommendPairs.Get(recommend.Limit() - len(*accounts))
+	*accounts = append(*accounts, pairs...)
 
-	if len(allPairs) == recommend.Limit {
-		return allPairs
+	if len(*accounts) == recommend.Limit() {
+		return
 	}
 
 	// relationship
 
 	interestIndexes = make([]IDS, len(account.Interests))
 	for i, interest := range account.Interests {
-		if filter.City != nil {
-			interestIndexes[i] = store.indexInterestRelationship.FindByCity(interest, *filter.City)
-		} else if filter.Country != nil {
-			interestIndexes[i] = store.indexInterestRelationship.FindByCountry(interest, *filter.Country)
+		if filter.City != 0 {
+			interestIndexes[i] = store.index.InterestRelationship.FindByCity(interest, filter.City)
+		} else if filter.Country != 0 {
+			interestIndexes[i] = store.index.InterestRelationship.FindByCountry(interest, filter.Country)
 		} else {
-			interestIndexes[i] = store.indexInterestRelationship.Find(interest)
+			interestIndexes[i] = store.index.InterestRelationship.Find(interest)
 		}
 	}
 
@@ -273,10 +260,8 @@ func (store *Store) RecommendAll(account *Account, recommend *Recommend) []*Acco
 
 	recommendPairs.Sort()
 
-	pairs = recommendPairs.Get(recommend.Limit - len(allPairs))
-	allPairs = append(allPairs, pairs...)
-
-	return allPairs
+	pairs = recommendPairs.Get(recommend.Limit() - len(*accounts))
+	*accounts = append(*accounts, pairs...)
 }
 
 // type RecommendPair struct {

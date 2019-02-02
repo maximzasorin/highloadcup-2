@@ -90,6 +90,17 @@ func (index *IndexCity) Find(city City) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexCity) Iter(city City) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.cities[city]; ok {
+		iter := index.cities[city].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexCity) Len() int {
 	index.rwLock.RLock()
 	citiesLen := len(index.cities)

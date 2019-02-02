@@ -90,6 +90,17 @@ func (index *IndexInterest) Find(interest Interest) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexInterest) Iter(interest Interest) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.interests[interest]; ok {
+		iter := index.interests[interest].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexInterest) Len() int {
 	index.rwLock.RLock()
 	interestsLen := len(index.interests)

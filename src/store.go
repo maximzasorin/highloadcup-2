@@ -1,9 +1,9 @@
 package main
 
 import (
-	"errors"
-	"fmt"
 	"sync"
+
+	"github.com/pkg/errors"
 )
 
 const (
@@ -11,58 +11,29 @@ const (
 )
 
 type Store struct {
-	parser                    *Parser
-	dicts                     *Dicts
-	count                     ID
-	now                       uint32
-	rating                    bool
-	accountsMap               map[ID]*Account
-	accountsArr               []Account
-	emails                    map[string]ID
-	rwLock                    sync.RWMutex
-	indexID                   *IndexID
-	indexLikee                *IndexLikee
-	indexInterest             *IndexInterest
-	indexCity                 *IndexCity
-	indexBirthYear            *IndexYear
-	indexJoinedYear           *IndexYear
-	indexCountry              *IndexCountry
-	indexFname                *IndexFname
-	indexPhoneCode            *IndexPhoneCode
-	indexGroup                *IndexGroup
-	indexSex                  *IndexSex
-	indexStatus               *IndexStatus
-	indexInterestPremium      *IndexInterestPremium
-	indexInterestSingle       *IndexInterestSingle
-	indexInterestComplicated  *IndexInterestComplicated
-	indexInterestRelationship *IndexInterestRelationship
+	parser      *Parser
+	dicts       *Dicts
+	count       ID
+	now         uint32
+	rating      bool
+	accountsMap map[ID]*Account
+	accountsArr []Account
+	emails      map[string]ID
+	rwLock      sync.RWMutex
+	index       *Index
 }
 
 func NewStore(dicts *Dicts, now uint32, rating bool) *Store {
-	return &Store{
-		dicts:                     dicts,
-		now:                       now,
-		rating:                    rating,
-		accountsMap:               make(map[ID]*Account),
-		accountsArr:               make([]Account, storePreallocCount),
-		emails:                    make(map[string]ID),
-		indexID:                   NewIndexID(storePreallocCount),
-		indexLikee:                NewIndexLikee(),
-		indexInterest:             NewIndexInterest(),
-		indexCity:                 NewIndexCity(),
-		indexBirthYear:            NewIndexYear(),
-		indexJoinedYear:           NewIndexYear(),
-		indexCountry:              NewIndexCountry(),
-		indexFname:                NewIndexFname(),
-		indexPhoneCode:            NewIndexPhoneCode(),
-		indexGroup:                NewIndexGroup(dicts),
-		indexSex:                  NewIndexSex(),
-		indexStatus:               NewIndexStatus(),
-		indexInterestPremium:      NewIndexInterestPremium(),
-		indexInterestSingle:       NewIndexInterestSingle(),
-		indexInterestComplicated:  NewIndexInterestComplicated(),
-		indexInterestRelationship: NewIndexInterestRelationship(),
+	store := &Store{
+		dicts:       dicts,
+		now:         now,
+		rating:      rating,
+		accountsMap: make(map[ID]*Account),
+		accountsArr: make([]Account, storePreallocCount),
+		emails:      make(map[string]ID),
 	}
+	store.index = NewIndex(store, dicts)
+	return store
 }
 
 func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) (*Account, error) {
@@ -108,17 +79,15 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 	}
 	var account *Account
 	if rawAccount.ID < storePreallocCount {
-		store.accountsArr[rawAccount.ID] = Account{
-			ID:          ID(rawAccount.ID),
-			Sex:         rawAccount.Sex,
-			Status:      rawAccount.Status,
-			Birth:       rawAccount.Birth,
-			Joined:      rawAccount.Joined,
-			Premium:     rawAccount.Premium,
-			Email:       rawAccount.Email,
-			EmailDomain: rawAccount.EmailDomain,
-		}
 		account = &store.accountsArr[rawAccount.ID]
+		account.ID = ID(rawAccount.ID)
+		account.Sex = rawAccount.Sex
+		account.Status = rawAccount.Status
+		account.Birth = rawAccount.Birth
+		account.Joined = rawAccount.Joined
+		account.Premium = rawAccount.Premium
+		account.Email = rawAccount.Email
+		account.EmailDomain = rawAccount.EmailDomain
 	} else {
 		store.accountsMap[ID(rawAccount.ID)] = &Account{
 			ID:          ID(rawAccount.ID),
@@ -139,188 +108,72 @@ func (store *Store) Add(rawAccount *RawAccount, check bool, updateIndexes bool) 
 		account.Phone = rawAccount.Phone
 		account.PhoneCode = *rawAccount.PhoneCode
 	}
-
 	if rawAccount.Fname != nil {
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
 	}
-
 	if rawAccount.Sname != nil {
 		account.Sname = store.dicts.AddSname(*rawAccount.Sname)
 	}
-
 	if rawAccount.Country != nil {
 		account.Country = store.dicts.AddCountry(*rawAccount.Country)
 	}
-
 	if rawAccount.City != nil {
 		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
 	}
-
-	if len(rawAccount.Likes) > 0 {
-		for _, like := range rawAccount.Likes {
-			account.AppendLike(&AccountLike{
-				ID: ID(like.ID),
-				Ts: like.Ts,
-			})
-			store.indexLikee.Add(ID(like.ID), ID(account.ID))
-		}
-		account.SortLikes()
-	}
-
+	// if len(rawAccount.Likes) > 0 {
+	// 	for _, like := range rawAccount.Likes {
+	// 		account.AppendLike(&AccountLike{
+	// 			ID: ID(like.ID),
+	// 			Ts: like.Ts,
+	// 		})
+	// 	}
+	// 	account.SortLikes()
+	// }
 	for _, interestStr := range rawAccount.Interests {
 		interest := store.dicts.AddInterest(interestStr)
 		account.Interests = append(account.Interests, interest)
 	}
-
 	if updateIndexes {
-		store.AddToIndex(account)
+		// batch := BorrowIndexBatch(store.index)
+		batch := &IndexBatch{index: store.index}
+		batch.Add(account)
+		batch.AddInterests(account.ID, account.Status, account.Sex, account.City, account.Country, store.PremiumNow(account), account.Interests...)
+		batch.AddGroupHash(CreateHashFromAccount(account), account.Interests...)
+		for _, like := range rawAccount.Likes {
+			batch.AddLike(account.ID, ID(like.ID), like.Ts)
+		}
+		store.index.worker.Add(batch.Dispatch())
+	} else {
+		// likes add always to index
+		for _, like := range rawAccount.Likes {
+			store.index.AppendLike(account.ID, ID(like.ID), like.Ts)
+		}
 	}
-
 	store.count++
 
 	return account, nil
 }
 
-func (store *Store) AddToIndex(account *Account) {
-	store.indexID.Add(account.ID)
-	store.indexSex.Add(account.Sex, account.ID)
-	store.indexStatus.Add(account.Status, account.ID)
-	store.indexBirthYear.Add(timestampToYear(account.Birth), account.ID)
-	store.indexJoinedYear.Add(timestampToYear(int64(account.Joined)), account.ID)
-	if account.Phone != nil {
-		store.indexPhoneCode.Add(account.PhoneCode, account.ID)
-	} else {
-		store.indexPhoneCode.Add(0, account.ID)
-	}
-	if account.Fname != 0 {
-		store.indexFname.Add(account.Fname, account.ID)
-	} else {
-		store.indexFname.Add(0, account.ID)
-	}
-	if account.Country != 0 {
-		store.indexCountry.Add(account.Country, account.ID)
-	} else {
-		store.indexCountry.Add(0, account.ID)
-	}
-	if account.City != 0 {
-		store.indexCity.Add(account.City, account.ID)
-	} else {
-		store.indexCity.Add(0, account.ID)
-	}
-	for _, interest := range account.Interests {
-		store.indexInterest.Add(interest, account.ID)
-		if store.PremiumNow(account) {
-			store.indexInterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
-		} else {
-			if account.Status == StatusSingle {
-				store.indexInterestSingle.Add(interest, account.City, account.Country, account.ID)
-			} else if account.Status == StatusComplicated {
-				store.indexInterestComplicated.Add(interest, account.City, account.Country, account.ID)
-			} else if account.Status == StatusRelationship {
-				store.indexInterestRelationship.Add(interest, account.City, account.Country, account.ID)
-			}
-		}
-	}
-
-	store.indexGroup.AddHash(CreateHashFromAccount(account), account.Interests...)
-}
-
-func (store *Store) AppendToIndex(account *Account) {
-	store.indexID.Append(account.ID)
-	store.indexSex.Append(account.Sex, account.ID)
-	store.indexStatus.Append(account.Status, account.ID)
-	store.indexBirthYear.Append(timestampToYear(account.Birth), account.ID)
-	store.indexJoinedYear.Append(timestampToYear(int64(account.Joined)), account.ID)
-	store.indexFname.Append(account.Fname, account.ID)
-	store.indexCountry.Append(account.Country, account.ID)
-	store.indexCity.Append(account.City, account.ID)
-	if account.Phone != nil {
-		store.indexPhoneCode.Append(account.PhoneCode, account.ID)
-	} else {
-		store.indexPhoneCode.Append(0, account.ID)
-	}
-	for _, interest := range account.Interests {
-		store.indexInterest.Append(interest, account.ID)
-		if store.PremiumNow(account) {
-			store.indexInterestPremium.Append(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
-		} else {
-			if account.Status == StatusSingle {
-				store.indexInterestSingle.Append(interest, account.City, account.Country, account.ID)
-			}
-			if account.Status == StatusComplicated {
-				store.indexInterestComplicated.Append(interest, account.City, account.Country, account.ID)
-			}
-			if account.Status == StatusRelationship {
-				store.indexInterestRelationship.Append(interest, account.City, account.Country, account.ID)
-			}
-		}
-	}
-	store.indexGroup.Append(account)
-}
-
-func (store *Store) UpdateIndex() {
-	store.indexID.Update()
-	store.indexSex.UpdateAll()
-	store.indexStatus.UpdateAll()
-	store.indexBirthYear.UpdateAll()
-	store.indexJoinedYear.UpdateAll()
-	store.indexFname.UpdateAll()
-	store.indexCountry.UpdateAll()
-	store.indexCity.UpdateAll()
-	store.indexPhoneCode.UpdateAll()
-	store.indexInterest.UpdateAll()
-	store.indexInterestPremium.UpdateAll()
-	store.indexInterestSingle.UpdateAll()
-	store.indexInterestComplicated.UpdateAll()
-	store.indexInterestRelationship.UpdateAll()
-	store.indexGroup.UpdateAll()
-
-	fmt.Println("total birth years =", store.indexBirthYear.Len())
-	fmt.Println("total joined years =", store.indexJoinedYear.Len())
-	fmt.Println("total fnames =", store.indexFname.Len())
-	fmt.Println("total countries =", store.indexCountry.Len())
-	fmt.Println("total cities =", store.indexCity.Len())
-	fmt.Println("total phone codes =", store.indexPhoneCode.Len())
-	fmt.Println("total interests =", store.indexInterest.Len())
-
-	// fmt.Println("total group entries =", len(store.indexGroup.entries))
-	// for filter, groups := range store.indexGroup.entries {
-	// 	for group := range groups {
-	// 		for filterVal, entries := range groups[group] {
-	// 			fmt.Printf("%b x %b x %b: %d\n", filter, group, filterVal, entries.Len())
-	// 		}
-	// 	}
-	// }
-}
-
-func (store *Store) AddLikes(rawLikes []*Like, updateIndexes bool) error {
-	// if len(rawLikes) == 0 {
-	// 	return errors.New("No likes founded")
-	// }
-
+func (store *Store) AddLikes(likes *Likes, updateIndexes bool) error {
 	store.rwLock.RLock()
-	for _, rawLike := range rawLikes {
-		if store.get(ID(rawLike.Likee)) == nil {
+	for _, like := range likes.likes {
+		if store.get(ID(like.Likee)) == nil {
 			store.rwLock.RUnlock()
 			return errors.New("Cannot find likee account")
 		}
-		if store.get(ID(rawLike.Liker)) == nil {
+		if store.get(ID(like.Liker)) == nil {
 			store.rwLock.RUnlock()
 			return errors.New("Cannot find liker account")
 		}
 	}
 	store.rwLock.RUnlock()
 
-	for _, rawLike := range rawLikes {
-		store.rwLock.RLock()
-		liker := store.get(ID(rawLike.Liker))
-		store.rwLock.RUnlock()
-		liker.AddLike(&AccountLike{
-			ID: ID(rawLike.Likee),
-			Ts: rawLike.Ts,
-		})
-		store.indexLikee.Add(ID(rawLike.Likee), ID(rawLike.Liker))
+	// batch := BorrowIndexBatch(store.index)
+	batch := &IndexBatch{index: store.index}
+	for _, likes := range likes.likes {
+		batch.AddLike(ID(likes.Liker), ID(likes.Likee), likes.Ts)
 	}
+	store.index.worker.Add(batch.Dispatch())
 
 	return nil
 }
@@ -347,30 +200,40 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	for i, interest := range account.Interests {
 		oldInts[i] = interest
 	}
-	// store.indexGroup.Sub(account)
+
+	// batch := BorrowIndexBatch(store.index)
+	batch := &IndexBatch{index: store.index}
 
 	if rawAccount.Premium != nil {
 		account.Premium = rawAccount.Premium
 		if store.PremiumNow(account) {
 			for _, interest := range account.Interests {
-				store.indexInterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				// batch.InterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				batch.AddInterestPremium(account.ID, interest, account.Status, account.Sex, account.City, account.Country)
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 			}
 		} else {
 			for _, interest := range account.Interests {
-				store.indexInterestPremium.Remove(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				batch.RemoveInterestPremium(account.ID, interest, account.Status, account.Sex, account.City, account.Country)
+				// batch.InterestPremium.Remove(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 			}
 		}
@@ -378,32 +241,43 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	if rawAccount.Sex != 0 {
 		oldSex := account.Sex
 		account.Sex = rawAccount.Sex
-		store.indexSex.Remove(oldSex, account.ID)
-		store.indexSex.Add(account.Sex, account.ID)
+
+		batch.ReplaceSex(account.ID, oldSex, account.Sex)
+
+		// batch.Sex.Remove(oldSex, account.ID)
+		// batch.Sex.Add(account.Sex, account.ID)
 	}
 	if rawAccount.Status != 0 {
 		oldStatus := account.Status
 		account.Status = rawAccount.Status
-		store.indexStatus.Remove(oldStatus, account.ID)
-		store.indexStatus.Add(account.Status, account.ID)
+		batch.ReplaceStatus(account.ID, oldStatus, account.Status)
+		// batch.Status.Remove(oldStatus, account.ID)
+		// batch.Status.Add(account.Status, account.ID)
 		for _, interest := range account.Interests {
 			if store.PremiumNow(account) {
-				store.indexInterestPremium.Remove(interest, oldStatus, account.Sex, account.City, account.Country, account.ID)
-				store.indexInterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				batch.ReplaceInterestPremiumStatus(account.ID, interest, account.Sex, account.City, account.Country, oldStatus, account.Status)
+				// batch.InterestPremium.Remove(interest, oldStatus, account.Sex, account.City, account.Country, account.ID)
+				// batch.InterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
 			} else {
 				if oldStatus == StatusSingle {
-					store.indexInterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if oldStatus == StatusComplicated {
-					store.indexInterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if oldStatus == StatusRelationship {
-					store.indexInterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 			}
 		}
@@ -411,9 +285,10 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	if rawAccount.Birth != 0 && account.Birth != rawAccount.Birth {
 		oldBirth := rawAccount.Birth
 		account.Birth = rawAccount.Birth
-		store.indexBirthYear.Remove(timestampToYear(oldBirth), ID(account.ID))
-		newYear := timestampToYear(rawAccount.Birth)
-		store.indexBirthYear.Add(newYear, ID(account.ID))
+		// batch.BirthYear.Remove(timestampToYear(oldBirth), ID(account.ID))
+		// newYear := timestampToYear(rawAccount.Birth)
+		// batch.BirthYear.Add(newYear, ID(account.ID))
+		batch.ReplaceBirth(account.ID, timestampToYear(oldBirth), timestampToYear(rawAccount.Birth))
 	}
 	if rawAccount.Email != "" && account.Email != rawAccount.Email {
 		oldEmail := account.Email
@@ -426,17 +301,24 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	}
 	if rawAccount.Phone != nil && (account.Phone == nil || *account.Phone != *rawAccount.Phone) {
 		account.Phone = rawAccount.Phone
-		if account.PhoneCode != 0 {
-			store.indexPhoneCode.Remove(account.PhoneCode, account.ID)
-		}
+		oldPhoneCode := account.PhoneCode
+		// if account.PhoneCode != 0 {
+		// 	batch.PhoneCode.Remove(account.PhoneCode, account.ID)
+		// }
 		account.PhoneCode = *rawAccount.PhoneCode
-		store.indexPhoneCode.Add(account.PhoneCode, account.ID)
+		// batch.PhoneCode.Add(account.PhoneCode, account.ID)
+		if oldPhoneCode != 0 {
+			batch.ReplacePhoneCode(account.ID, oldPhoneCode, account.PhoneCode)
+		} else {
+			batch.AddPhoneCode(account.ID, account.PhoneCode)
+		}
 	}
 	if rawAccount.Fname != nil {
 		oldFname := account.Fname
 		account.Fname = store.dicts.AddFname(*rawAccount.Fname)
-		store.indexFname.Remove(oldFname, account.ID)
-		store.indexFname.Add(account.Fname, account.ID)
+		batch.ReplaceFname(account.ID, oldFname, account.Fname)
+		// batch.Fname.Remove(oldFname, account.ID)
+		// batch.Fname.Add(account.Fname, account.ID)
 	}
 	if rawAccount.Sname != nil {
 		account.Sname = store.dicts.AddSname(*rawAccount.Sname)
@@ -444,22 +326,27 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	if rawAccount.Country != nil {
 		oldCountry := account.Country
 		account.Country = store.dicts.AddCountry(*rawAccount.Country)
-		store.indexCountry.Remove(oldCountry, ID(account.ID))
-		store.indexCountry.Add(account.Country, ID(account.ID))
+		batch.ReplaceCountry(account.ID, oldCountry, account.Country)
+		// batch.Country.Remove(oldCountry, ID(account.ID))
+		// batch.Country.Add(account.Country, ID(account.ID))
 		for _, interest := range account.Interests {
 			if store.PremiumNow(account) {
-				store.indexInterestPremium.RemoveCountry(interest, oldCountry, account.ID)
-				store.indexInterestPremium.AddCountry(interest, account.Country, account.ID)
+				batch.ReplaceInterestPremiumCountry(account.ID, interest, oldCountry, account.Country)
+				// batch.InterestPremium.RemoveCountry(interest, oldCountry, account.ID)
+				// batch.InterestPremium.AddCountry(interest, account.Country, account.ID)
 			} else {
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.RemoveCountry(interest, oldCountry, account.ID)
-					store.indexInterestSingle.AddCountry(interest, account.Country, account.ID)
+					// batch.InterestSingle.RemoveCountry(interest, oldCountry, account.ID)
+					// batch.InterestSingle.AddCountry(interest, account.Country, account.ID)
+					batch.ReplaceInterestSingleCountry(account.ID, interest, oldCountry, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.RemoveCountry(interest, oldCountry, account.ID)
-					store.indexInterestComplicated.AddCountry(interest, account.Country, account.ID)
+					// batch.InterestComplicated.RemoveCountry(interest, oldCountry, account.ID)
+					// batch.InterestComplicated.AddCountry(interest, account.Country, account.ID)
+					batch.ReplaceInterestComplicatedCountry(account.ID, interest, oldCountry, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.RemoveCountry(interest, oldCountry, account.ID)
-					store.indexInterestRelationship.AddCountry(interest, account.Country, account.ID)
+					// batch.InterestRelationship.RemoveCountry(interest, oldCountry, account.ID)
+					// batch.InterestRelationship.AddCountry(interest, account.Country, account.ID)
+					batch.ReplaceInterestRelationshipCountry(account.ID, interest, oldCountry, account.Country)
 				}
 			}
 		}
@@ -467,22 +354,27 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	if rawAccount.City != nil {
 		oldCity := account.City
 		account.City = store.dicts.AddCity(account.Country, *rawAccount.City)
-		store.indexCity.Remove(oldCity, account.ID)
-		store.indexCity.Add(account.City, account.ID)
+		// batch.City.Remove(oldCity, account.ID)
+		// batch.City.Add(account.City, account.ID)
+		batch.ReplaceCity(account.ID, oldCity, account.City)
 		for _, interest := range account.Interests {
 			if store.PremiumNow(account) {
-				store.indexInterestPremium.RemoveCity(interest, oldCity, account.ID)
-				store.indexInterestPremium.AddCity(interest, account.City, account.ID)
+				// batch.InterestPremium.RemoveCity(interest, oldCity, account.ID)
+				// batch.InterestPremium.AddCity(interest, account.City, account.ID)
+				batch.ReplaceInterestPremiumCity(account.ID, interest, oldCity, account.City)
 			} else {
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.RemoveCity(interest, oldCity, account.ID)
-					store.indexInterestSingle.AddCity(interest, account.City, account.ID)
+					// batch.InterestSingle.RemoveCity(interest, oldCity, account.ID)
+					// batch.InterestSingle.AddCity(interest, account.City, account.ID)
+					batch.ReplaceInterestSingleCity(account.ID, interest, oldCity, account.City)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.RemoveCity(interest, oldCity, account.ID)
-					store.indexInterestComplicated.AddCity(interest, account.City, account.ID)
+					// batch.InterestComplicated.RemoveCity(interest, oldCity, account.ID)
+					// batch.InterestComplicated.AddCity(interest, account.City, account.ID)
+					batch.ReplaceInterestComplicatedCity(account.ID, interest, oldCity, account.City)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.RemoveCity(interest, oldCity, account.ID)
-					store.indexInterestRelationship.AddCity(interest, account.City, account.ID)
+					// batch.InterestRelationship.RemoveCity(interest, oldCity, account.ID)
+					// batch.InterestRelationship.AddCity(interest, account.City, account.ID)
+					batch.ReplaceInterestRelationshipCity(account.ID, interest, oldCity, account.City)
 				}
 			}
 		}
@@ -490,43 +382,62 @@ func (store *Store) Update(id ID, rawAccount *RawAccount, updateIndexes bool) (*
 	// TODO: may be empty interests list
 	if len(rawAccount.Interests) > 0 {
 		for _, interest := range account.Interests {
-			store.indexInterest.Remove(interest, account.ID)
+			// batch.Interest.Remove(interest, account.ID)
+			batch.RemoveInterest(account.ID, interest)
 			if store.PremiumNow(account) {
-				store.indexInterestPremium.Remove(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				// batch.InterestPremium.Remove(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				batch.RemoveInterestPremium(account.ID, interest, account.Status, account.Sex, account.City, account.Country)
 			} else {
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Remove(interest, account.City, account.Country, account.ID)
+					batch.RemoveInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 			}
 		}
+
 		account.Interests = account.Interests[:0]
+
 		for _, interestStr := range rawAccount.Interests {
 			interest := store.dicts.AddInterest(interestStr)
 			account.Interests = append(account.Interests, interest)
-			store.indexInterest.Add(interest, account.ID)
+			// batch.Interest.Add(interest, account.ID)
+			batch.AddInterest(account.ID, interest)
 			if store.PremiumNow(account) {
-				store.indexInterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				// batch.InterestPremium.Add(interest, account.Status, account.Sex, account.City, account.Country, account.ID)
+				batch.AddInterestPremium(account.ID, interest, account.Status, account.Sex, account.City, account.Country)
 			} else {
 				if account.Status == StatusSingle {
-					store.indexInterestSingle.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestSingle.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestSingle(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusComplicated {
-					store.indexInterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestComplicated.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestComplicated(account.ID, interest, account.City, account.Country)
 				} else if account.Status == StatusRelationship {
-					store.indexInterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					// batch.InterestRelationship.Add(interest, account.City, account.Country, account.ID)
+					batch.AddInterestRelationship(account.ID, interest, account.City, account.Country)
 				}
 			}
 		}
 	}
 
-	func() {
-		store.indexGroup.SubHash(oldHash, oldInts...)
-		store.indexGroup.AddHash(CreateHashFromAccount(account), account.Interests...)
-	}()
-	// store.indexGroup.Add(account)
+	batch.SubGroupHash(oldHash, oldInts...)
+	batch.AddGroupHash(CreateHashFromAccount(account), account.Interests...)
+
+	store.index.worker.Add(batch.Dispatch())
+
+	// store.index.AddGroupHash(CreateHashFromAccount(account), account.Interests...)
+
+	// go func() {
+	// 	store.index.Group.SubHash(oldHash, oldInts...)
+	// 	store.index.Group.AddHash(CreateHashFromAccount(account), account.Interests...)
+	// }()
+	// store.index.Group.Add(account)
 
 	return account, nil
 }

@@ -1,12 +1,13 @@
 package main
 
 import (
-	"errors"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/pkg/errors"
 )
 
 type (
@@ -37,8 +38,6 @@ const (
 
 // https://github.com/MailRuChamps/hlcupdocs/issues/119#issuecomment-450162555
 type GroupFilter struct {
-	ExpectEmpty   bool
-	NoFilter      bool
 	Sex           byte
 	Status        byte
 	Country       Country
@@ -57,28 +56,92 @@ type Group struct {
 	parser *Parser
 	dicts  *Dicts
 
-	QueryID   string
-	Limit     uint8
-	OrderAsc  bool
-	OrderDesc bool
+	// queryID     string
+	expectEmpty bool
+	noFilter    bool
+	limit       int
+	orderAsc    bool
+	orderDesc   bool
 
 	// Filter
 	Filter     GroupFilter
-	FilterHash GroupHash
+	FilterMask GroupHash
 
 	// Group
-	Keys     []GroupKey
-	KeysHash GroupHash
+	Keys      []GroupKey
+	KeysMask  GroupHash
+	GroupHash GroupHash
+}
 
-	Entry *GroupEntry
+var groupsPool = sync.Pool{
+	New: func() interface{} {
+		return &Group{
+			Keys: make([]GroupKey, 0, 2),
+		}
+	},
+}
+
+func BorrowGroup(parser *Parser, dicts *Dicts) *Group {
+	g := groupsPool.Get().(*Group)
+	g.Reset()
+	g.parser = parser
+	g.dicts = dicts
+	return g
 }
 
 func NewGroup(parser *Parser, dicts *Dicts) *Group {
 	return &Group{
 		parser: parser,
 		dicts:  dicts,
-		Entry:  NewGroupEntry(0),
 	}
+}
+
+func (group *Group) Release() {
+	groupsPool.Put(group)
+}
+
+func (group *Group) Reset() {
+	group.expectEmpty = false
+	group.noFilter = true
+	group.limit = 0
+	group.orderAsc = false
+	group.orderDesc = false
+	group.Filter.Sex = 0
+	group.Filter.Status = 0
+	group.Filter.Country = 0
+	group.Filter.City = 0
+	group.Filter.BirthYear = 0
+	group.Filter.BirthYearGte = 0
+	group.Filter.BirthYearLte = 0
+	group.Filter.Interests = 0
+	group.Filter.Likes = 0
+	group.Filter.JoinedYear = 0
+	group.Filter.JoinedYearGte = 0
+	group.Filter.JoinedYearLte = 0
+	group.FilterMask = 0
+	group.Keys = group.Keys[:0]
+	group.KeysMask = 0
+	group.GroupHash = 0
+}
+
+func (group *Group) ExpectEmpty() bool {
+	return group.expectEmpty
+}
+
+func (group *Group) NoFilter() bool {
+	return group.noFilter
+}
+
+func (group *Group) OrderAsc() bool {
+	return group.orderAsc
+}
+
+func (group *Group) OrderDesc() bool {
+	return group.orderDesc
+}
+
+func (group *Group) Limit() int {
+	return group.limit
 }
 
 func (group *Group) Parse(query string) error {
@@ -98,19 +161,19 @@ func (group *Group) Parse(query string) error {
 		}
 	}
 
-	if group.KeysHash == 0 {
+	if group.KeysMask == 0 {
 		return errors.New("Keys field should be specified")
 	}
 
-	if group.Limit == 0 {
+	if group.limit == 0 {
 		return errors.New("Limit should be specified")
 	}
 
-	if !group.OrderAsc && !group.OrderDesc {
+	if !group.orderAsc && !group.orderDesc {
 		return errors.New("Order should be specified")
 	}
 
-	group.Filter.NoFilter = group.Filter.Sex == 0 &&
+	group.noFilter = group.Filter.Sex == 0 &&
 		group.Filter.Status == 0 &&
 		group.Filter.Country == 0 &&
 		group.Filter.City == 0 &&
@@ -123,7 +186,7 @@ func (group *Group) Parse(query string) error {
 }
 
 func (group *Group) HasKey(hash GroupHash) bool {
-	return (group.KeysHash & hash) > 0
+	return (group.KeysMask & hash) > 0
 }
 
 func (group *Group) ParseParam(param string, value string) error {
@@ -135,19 +198,19 @@ func (group *Group) ParseParam(param string, value string) error {
 			switch key {
 			case "sex":
 				group.Keys = append(group.Keys, GroupSex)
-				group.KeysHash |= GroupSexMask
+				group.KeysMask |= GroupSexMask
 			case "status":
 				group.Keys = append(group.Keys, GroupStatus)
-				group.KeysHash |= GroupStatusMask
+				group.KeysMask |= GroupStatusMask
 			case "interests":
 				group.Keys = append(group.Keys, GroupInterests)
-				group.KeysHash |= GroupInterestsMask
+				group.KeysMask |= GroupInterestsMask
 			case "country":
 				group.Keys = append(group.Keys, GroupCountry)
-				group.KeysHash |= GroupCountryMask
+				group.KeysMask |= GroupCountryMask
 			case "city":
 				group.Keys = append(group.Keys, GroupCity)
-				group.KeysHash |= GroupCityMask
+				group.KeysMask |= GroupCityMask
 			default:
 				return errors.New("Unknown group key " + key)
 			}
@@ -157,34 +220,34 @@ func (group *Group) ParseParam(param string, value string) error {
 		if err != nil {
 			return err
 		}
-		group.FilterHash |= GroupSexMask
-		group.Entry.SetSex(sex)
+		group.FilterMask |= GroupSexMask
+		group.GroupHash.SetSex(sex)
 		filter.Sex = sex
 	case "status":
 		status, err := group.parser.ParseStatus(value)
 		if err != nil {
 			return err
 		}
-		group.FilterHash |= GroupStatusMask
+		group.FilterMask |= GroupStatusMask
 		filter.Status = status
-		group.Entry.SetStatus(status)
+		group.GroupHash.SetStatus(status)
 	case "country":
 		country, err := group.dicts.GetCountry(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			group.expectEmpty = true
 			return nil
 		}
-		group.FilterHash |= GroupCountryMask
-		group.Entry.SetCountry(country)
+		group.FilterMask |= GroupCountryMask
+		group.GroupHash.SetCountry(country)
 		filter.Country = country
 	case "city":
 		city, err := group.dicts.GetCity(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			group.expectEmpty = true
 			return nil
 		}
-		group.FilterHash |= GroupCityMask
-		group.Entry.SetCity(city)
+		group.FilterMask |= GroupCityMask
+		group.GroupHash.SetCity(city)
 		filter.City = city
 	case "birth":
 		ui64, err := strconv.ParseUint(value, 10, 16)
@@ -192,8 +255,8 @@ func (group *Group) ParseParam(param string, value string) error {
 			return err
 		}
 		filter.BirthYear = Year(ui64)
-		group.FilterHash |= GroupBirthMask
-		group.Entry.SetBirth(filter.BirthYear)
+		group.FilterMask |= GroupBirthMask
+		group.GroupHash.SetBirth(filter.BirthYear)
 
 		birthYearGte, birthYearLte := YearToTimestamp(filter.BirthYear)
 		filter.BirthYearGte = birthYearGte
@@ -201,12 +264,12 @@ func (group *Group) ParseParam(param string, value string) error {
 	case "interests":
 		interest, err := group.dicts.GetInterest(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			group.expectEmpty = true
 			return nil
 		}
 		filter.Interests = interest
-		group.FilterHash |= GroupInterestsMask
-		group.Entry.SetInterest(filter.Interests)
+		group.FilterMask |= GroupInterestsMask
+		group.GroupHash.SetInterest(filter.Interests)
 	case "likes":
 		ui64, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
@@ -219,8 +282,8 @@ func (group *Group) ParseParam(param string, value string) error {
 			return err
 		}
 		filter.JoinedYear = Year(ui64)
-		group.FilterHash |= GroupJoinedMask
-		group.Entry.SetJoined(filter.JoinedYear)
+		group.FilterMask |= GroupJoinedMask
+		group.GroupHash.SetJoined(filter.JoinedYear)
 
 		gte64, lte64 := YearToTimestamp(filter.JoinedYear)
 		filter.JoinedYearGte = uint32(gte64)
@@ -231,9 +294,9 @@ func (group *Group) ParseParam(param string, value string) error {
 			return err
 		}
 		if i8 == -1 {
-			group.OrderDesc = true
+			group.orderDesc = true
 		} else if i8 == 1 {
-			group.OrderAsc = true
+			group.orderAsc = true
 		} else {
 			return errors.New("Invalid order value")
 		}
@@ -242,9 +305,9 @@ func (group *Group) ParseParam(param string, value string) error {
 		if err != nil {
 			return errors.New("Invalid limit value")
 		}
-		group.Limit = uint8(ui64)
+		group.limit = int(ui64)
 	case "query_id":
-		group.QueryID = value
+		// group.queryID = value
 	default:
 		return errors.New("Unknown group param")
 	}
@@ -264,9 +327,9 @@ type GroupEntry struct {
 	Count uint32
 }
 
-func NewGroupEntry(hash GroupHash) *GroupEntry {
-	return &GroupEntry{Hash: hash, Count: 1}
-}
+// func NewGroupEntry(hash GroupHash) *GroupEntry {
+// 	return &GroupEntry{Hash: hash, Count: 1}
+// }
 
 func (entry *GroupEntry) Reset() {
 	entry.Hash = 0
@@ -336,32 +399,57 @@ func (entry *GroupEntry) GetHash() GroupHash {
 type Aggregation struct {
 	dicts     *Dicts
 	groupMask GroupHash
-	entries   []*GroupEntry
+	entries   []GroupEntry
 	rwLock    sync.RWMutex
+}
+
+var aggregationPool = sync.Pool{
+	New: func() interface{} {
+		return &Aggregation{
+			entries: make([]GroupEntry, 0, 64),
+		}
+	},
+}
+
+func BorrowAggregation(dicts *Dicts, groupMask GroupHash) *Aggregation {
+	a := aggregationPool.Get().(*Aggregation)
+	a.Reset()
+	a.dicts = dicts
+	a.groupMask = groupMask
+	return a
 }
 
 func NewAggregation(dicts *Dicts, groupMask GroupHash) *Aggregation {
 	return &Aggregation{
 		dicts:     dicts,
 		groupMask: groupMask,
-		entries:   make([]*GroupEntry, 0),
+		entries:   make([]GroupEntry, 0, 64),
 	}
+}
+
+func (ag *Aggregation) Release() {
+	aggregationPool.Put(ag)
+}
+
+func (ag *Aggregation) Reset() {
+	ag.groupMask = 0
+	ag.entries = ag.entries[:0]
 }
 
 func (ag *Aggregation) Append(hash GroupHash) {
 	ag.rwLock.Lock()
 	// ag.rwLock.RLock()
-	for _, entry := range ag.entries {
-		if entry.Hash == hash&ag.groupMask {
+	for i := range ag.entries {
+		if ag.entries[i].Hash == hash&ag.groupMask {
 			// ag.rwLock.RUnlock()
-			entry.Count++
+			ag.entries[i].Count++
 			ag.rwLock.Unlock()
 			return
 		}
 	}
 	// ag.rwLock.RUnlock()
 	// ag.rwLock.Lock()
-	ag.entries = append(ag.entries, NewGroupEntry(hash&ag.groupMask))
+	ag.entries = append(ag.entries, GroupEntry{Hash: hash & ag.groupMask, Count: 1})
 	ag.rwLock.Unlock()
 }
 
@@ -370,7 +458,8 @@ func (ag *Aggregation) Add(hash GroupHash) {
 	ag.rwLock.Lock()
 	index := 0
 	founded := false
-	for i, entry := range ag.entries {
+	for i := range ag.entries {
+		entry := &ag.entries[i]
 		if entry.Hash == hash&ag.groupMask {
 			// ag.rwLock.RUnlock()
 			entry.Count++
@@ -382,7 +471,11 @@ func (ag *Aggregation) Add(hash GroupHash) {
 	if !founded {
 		// ag.rwLock.RUnlock()
 		// ag.rwLock.Lock()
-		ag.entries = append([]*GroupEntry{NewGroupEntry(hash & ag.groupMask)}, ag.entries...)
+		// ag.entries = append([]GroupEntry{GroupEntry{Hash: hash & ag.groupMask, Count: 1}}, ag.entries...)
+		ag.entries = append(ag.entries, GroupEntry{})
+		copy(ag.entries[1:], ag.entries[:])
+		ag.entries[0].Hash = hash & ag.groupMask
+		ag.entries[0].Count = 1
 		// ag.rwLock.Unlock()
 	}
 	// ag.rwLock.RLock()
@@ -393,7 +486,7 @@ func (ag *Aggregation) Add(hash GroupHash) {
 	}
 	// ag.rwLock.RUnlock()
 	// ag.rwLock.Lock()
-	for i := index; i < len(ag.entries)-1 && !ag.gLess(ag.entries[i], ag.entries[i+1]); i++ {
+	for i := index; i < len(ag.entries)-1 && !ag.isGroupLess(&ag.entries[i], &ag.entries[i+1]); i++ {
 		ag.entries[i], ag.entries[i+1] = ag.entries[i+1], ag.entries[i]
 	}
 	ag.rwLock.Unlock()
@@ -403,11 +496,11 @@ func (ag *Aggregation) Sub(hash GroupHash) {
 	// ag.rwLock.RLock()
 	ag.rwLock.Lock()
 	index := 0
-	for i, entry := range ag.entries {
-		if entry.Hash == hash&ag.groupMask {
+	for i := range ag.entries {
+		if ag.entries[i].Hash == hash&ag.groupMask {
 			// ag.rwLock.RUnlock()
-			entry.Count--
-			if entry.Count == 0 {
+			ag.entries[i].Count--
+			if ag.entries[i].Count == 0 {
 				// ag.rwLock.Lock()
 				ag.entries = append(ag.entries[:i], ag.entries[i+1:]...)
 				ag.rwLock.Unlock()
@@ -425,7 +518,7 @@ func (ag *Aggregation) Sub(hash GroupHash) {
 	}
 	// ag.rwLock.RUnlock()
 	// ag.rwLock.Lock()
-	for i := index; i > 0 && ag.gLess(ag.entries[i], ag.entries[i-1]); i-- {
+	for i := index; i > 0 && ag.isGroupLess(&ag.entries[i], &ag.entries[i-1]); i-- {
 		ag.entries[i], ag.entries[i-1] = ag.entries[i-1], ag.entries[i]
 	}
 	ag.rwLock.Unlock()
@@ -437,7 +530,7 @@ func (ag *Aggregation) Update() {
 	ag.rwLock.Unlock()
 }
 
-func (ag *Aggregation) Get() []*GroupEntry {
+func (ag *Aggregation) Get() []GroupEntry {
 	return ag.entries
 }
 
@@ -446,10 +539,10 @@ func (ag *Aggregation) Swap(i, j int) {
 	ag.entries[i], ag.entries[j] = ag.entries[j], ag.entries[i]
 }
 func (ag *Aggregation) Less(i, j int) bool {
-	return ag.gLess(ag.entries[i], ag.entries[j])
+	return ag.isGroupLess(&ag.entries[i], &ag.entries[j])
 }
 
-func (ag *Aggregation) gLess(a, b *GroupEntry) bool {
+func (ag *Aggregation) isGroupLess(a, b *GroupEntry) bool {
 	if a.Count < b.Count {
 		return true
 	}

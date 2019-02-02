@@ -1,7 +1,9 @@
 package main
 
 import (
-	"errors"
+	"sync"
+
+	"github.com/pkg/errors"
 )
 
 type (
@@ -25,6 +27,7 @@ type Dicts struct {
 	cityCountry   map[City]Country
 	interests     map[string]Interest
 	interestStrs  map[Interest]string
+	rwLock        sync.RWMutex
 }
 
 func NewDicts() *Dicts {
@@ -45,20 +48,25 @@ func NewDicts() *Dicts {
 }
 
 func (dicts *Dicts) AddFname(fnameStr string) Fname {
+	dicts.rwLock.RLock()
 	fname, exists := dicts.fnames[fnameStr]
+	dicts.rwLock.RUnlock()
 	if exists {
 		return fname
 	}
-
+	dicts.rwLock.Lock()
 	fname = Fname(len(dicts.fnames) + 1)
 	dicts.fnames[fnameStr] = fname
 	dicts.fnameStrs[fname] = fnameStr
+	dicts.rwLock.Unlock()
 
 	return fname
 }
 
 func (dicts *Dicts) GetFname(fnameStr string) (Fname, error) {
+	dicts.rwLock.RLock()
 	fname, exists := dicts.fnames[fnameStr]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return 0, errors.New("Cannot find fname")
 	}
@@ -66,7 +74,9 @@ func (dicts *Dicts) GetFname(fnameStr string) (Fname, error) {
 }
 
 func (dicts *Dicts) GetFnameString(fname Fname) (string, error) {
+	dicts.rwLock.RLock()
 	fnameStr, exists := dicts.fnameStrs[fname]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return "", errors.New("Cannot find fname string")
 	}
@@ -78,20 +88,26 @@ func (dicts *Dicts) GetFnames() map[string]Fname {
 }
 
 func (dicts *Dicts) AddSname(snameStr string) Sname {
+	dicts.rwLock.RLock()
 	sname, exists := dicts.snames[snameStr]
+	dicts.rwLock.RUnlock()
 	if exists {
 		return sname
 	}
 
+	dicts.rwLock.Lock()
 	sname = Sname(len(dicts.snames) + 1)
 	dicts.snames[snameStr] = sname
 	dicts.snameStrs[sname] = snameStr
+	dicts.rwLock.Unlock()
 
 	return sname
 }
 
 func (dicts *Dicts) GetSname(snameStr string) (Sname, error) {
+	dicts.rwLock.RLock()
 	sname, exists := dicts.snames[snameStr]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return 0, errors.New("Cannot find sname")
 	}
@@ -99,7 +115,9 @@ func (dicts *Dicts) GetSname(snameStr string) (Sname, error) {
 }
 
 func (dicts *Dicts) GetSnameString(sname Sname) (string, error) {
+	dicts.rwLock.RLock()
 	snameStr, exists := dicts.snameStrs[sname]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return "", errors.New("Cannot find sname string")
 	}
@@ -111,21 +129,27 @@ func (dicts *Dicts) GetSnames() map[string]Sname {
 }
 
 func (dicts *Dicts) AddCountry(countryStr string) Country {
+	dicts.rwLock.RLock()
 	country, exists := dicts.countries[countryStr]
+	dicts.rwLock.RUnlock()
 	if exists {
 		return country
 	}
 
+	dicts.rwLock.Lock()
 	country = Country(len(dicts.countries) + 1)
 	dicts.countries[countryStr] = country
 	dicts.countryStrs[country] = countryStr
 	dicts.countryCities[country] = make([]City, 0, 15)
+	dicts.rwLock.Unlock()
 
 	return country
 }
 
 func (dicts *Dicts) GetCountry(countryStr string) (Country, error) {
+	dicts.rwLock.RLock()
 	country, exists := dicts.countries[countryStr]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return 0, errors.New("Cannot find country")
 	}
@@ -133,7 +157,9 @@ func (dicts *Dicts) GetCountry(countryStr string) (Country, error) {
 }
 
 func (dicts *Dicts) GetCountryString(country Country) (string, error) {
+	dicts.rwLock.RLock()
 	countryStr, exists := dicts.countryStrs[country]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return "", errors.New("Cannot find country string")
 	}
@@ -145,25 +171,29 @@ func (dicts *Dicts) GetCountries() map[string]Country {
 }
 
 func (dicts *Dicts) AddCity(country Country, cityStr string) City {
+	dicts.rwLock.RLock()
 	city, exists := dicts.cities[cityStr]
+	dicts.rwLock.RUnlock()
 	if exists {
 		return city
 	}
-
+	dicts.rwLock.Lock()
 	city = City(len(dicts.cities) + 1)
 	dicts.cities[cityStr] = city
 	dicts.cityStrs[city] = cityStr
-
 	if country != 0 {
 		dicts.countryCities[country] = append(dicts.countryCities[country], city)
 		dicts.cityCountry[city] = country
 	}
+	dicts.rwLock.Unlock()
 
 	return city
 }
 
 func (dicts *Dicts) GetCity(cityStr string) (City, error) {
+	dicts.rwLock.RLock()
 	city, exists := dicts.cities[cityStr]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return 0, errors.New("Cannot find city")
 	}
@@ -171,7 +201,9 @@ func (dicts *Dicts) GetCity(cityStr string) (City, error) {
 }
 
 func (dicts *Dicts) GetCityString(city City) (string, error) {
+	dicts.rwLock.RLock()
 	cityStr, exists := dicts.cityStrs[city]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return "", errors.New("Cannot find city string")
 	}
@@ -183,7 +215,9 @@ func (dicts *Dicts) GetCities() map[string]City {
 }
 
 func (dicts *Dicts) ExistsCityInCountry(city City, country Country) bool {
+	dicts.rwLock.RLock()
 	cityCountry, exists := dicts.cityCountry[city]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return false
 	}
@@ -206,20 +240,26 @@ func (dicts *Dicts) ExistsCityInCountry(city City, country Country) bool {
 // }
 
 func (dicts *Dicts) AddInterest(interestStr string) Interest {
+	dicts.rwLock.RLock()
 	interest, exists := dicts.interests[interestStr]
+	dicts.rwLock.RUnlock()
 	if exists {
 		return interest
 	}
 
+	dicts.rwLock.Lock()
 	interest = Interest(len(dicts.interests) + 1)
 	dicts.interests[interestStr] = interest
 	dicts.interestStrs[interest] = interestStr
+	dicts.rwLock.Unlock()
 
 	return interest
 }
 
 func (dicts *Dicts) GetInterest(interestStr string) (Interest, error) {
+	dicts.rwLock.RLock()
 	interest, exists := dicts.interests[interestStr]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return 0, errors.New("Cannot find interest")
 	}
@@ -227,7 +267,9 @@ func (dicts *Dicts) GetInterest(interestStr string) (Interest, error) {
 }
 
 func (dicts *Dicts) GetInterestString(interest Interest) (string, error) {
+	dicts.rwLock.RLock()
 	interestStr, exists := dicts.interestStrs[interest]
+	dicts.rwLock.RUnlock()
 	if !exists {
 		return "", errors.New("Cannot find interest string")
 	}

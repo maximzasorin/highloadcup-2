@@ -14,12 +14,17 @@ import (
 	"strings"
 	"time"
 
+	"net/http"
 	_ "net/http/pprof"
 
 	"github.com/pkg/errors"
 )
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+
 	var (
 		dataset = flag.String("dataset", "/tmp/data", "Dataset")
 		addr    = flag.String("addr", ":80", "Addr")
@@ -40,6 +45,9 @@ func main() {
 
 	server := NewServer(store, parser, dicts, &ServerOptions{
 		Addr: *addr,
+		// Routes: ServerRoutePostNew | ServerRoutePostUpdate | ServerRoutePostLikes,
+		Routes: ServerRouteAll,
+		// Stats:  true,
 	})
 
 	go func() {
@@ -61,15 +69,17 @@ func main() {
 	startIndex := time.Now()
 	j := 1
 	store.Iterate(func(account *Account) bool {
-		store.AppendToIndex(account)
+		store.index.Append(account)
+		store.index.AppendInterests(account, store.PremiumNow(account), account.Interests...)
 		if j%10000 == 0 {
-			printAppStatus(store, server)
 			fmt.Println(j)
 		}
 		j++
 		return true
 	})
-	store.UpdateIndex()
+	store.index.Update()
+	store.index.RunWorker()
+
 	fmt.Println("Index created in", time.Now().Sub(startIndex).Round(time.Millisecond))
 
 	// fmt.Println("Update country cities")
@@ -89,9 +99,9 @@ func main() {
 
 	printMemUsage()
 
-	fmt.Println("Start server")
+	setGCPercent(20)
 
-	// setGCPercent(25)
+	fmt.Println("Start server")
 
 	fmt.Println("Run GC...")
 	runtime.GC()
@@ -171,6 +181,7 @@ func parseFile(reader io.ReadCloser, parser *Parser, store *Store) {
 func printAppStatus(store *Store, server *Server) {
 	fmt.Println("------------------------------------")
 	fmt.Println("Total accounts =", store.Count())
+	fmt.Println("Worker len =", store.index.WorkerLen())
 	server.stats.Sort()
 	fmt.Println(server.stats.Format())
 	printMemUsage()

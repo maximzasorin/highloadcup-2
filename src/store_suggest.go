@@ -2,58 +2,56 @@ package main
 
 import (
 	"sort"
+	"sync"
 )
 
-func (store *Store) SuggestAll(account *Account, suggest *Suggest) []*Account {
+func (store *Store) Suggest(account *Account, suggest *Suggest, accounts *AccountsBuffer) {
 	filter := suggest.Filter
-	suggestAccounts := make([]*Account, 0)
 
-	if suggest.ExpectEmpty {
-		return suggestAccounts
-	}
-
-	myLikees := make(IDS, 0)
-	for _, like := range account.Likes {
-		myLikees = append(myLikees, like.ID)
+	if suggest.ExpectEmpty() {
+		return
 	}
 
 	similarLikerIndexes := make([]IDS, 0)
-	for _, myLikee := range myLikees {
-		similarLikerIndexes = append(similarLikerIndexes, store.indexLikee.Find(myLikee))
+	for _, like := range store.index.Liker.Find(account.ID) {
+		similarLikerIndexes = append(similarLikerIndexes, store.index.Likee.Find(like.ID))
 	}
 
 	ids := UnionIndexes(similarLikerIndexes...)
 
-	similarLikers := NewSimilarLikers(store, account, len(ids))
+	similarLikers := BorrowSimilarLikers(store, account)
+	defer similarLikers.Release()
+
+	// similarLikers := NewSimilarLikers(store, account, len(ids))
 	for _, id := range ids {
 		liker := store.get(id)
 		if account.Sex != liker.Sex {
 			continue
 		}
-		if filter.City != nil {
-			if *filter.City != liker.City {
+		if filter.City != 0 {
+			if filter.City != liker.City {
 				continue
 			}
 		}
-		if filter.Country != nil {
-			if *filter.Country != liker.Country {
+		if filter.Country != 0 {
+			if filter.Country != liker.Country {
 				continue
 			}
 		}
 		similarLikers.Add(liker)
 	}
 
-	// fmt.Println("len similar likers =", similarLikers.Len())
-
 	sort.Sort(similarLikers)
 
-	suggestIDs := make(IDS, 0)
+	suggestIDs := BorrowIDS()
+	defer suggestIDs.Release()
+
 	taked := make(map[ID]bool)
 	prevSug := 0
 	for _, similarLiker := range similarLikers.Get() {
-		for _, like := range similarLiker.Likes {
+		for _, like := range store.index.Liker.Find(similarLiker.ID) {
 			existsMyLike := false
-			for _, myLike := range account.Likes {
+			for _, myLike := range store.index.Liker.Find(account.ID) {
 				if myLike.ID == like.ID {
 					existsMyLike = true
 					break
@@ -61,30 +59,24 @@ func (store *Store) SuggestAll(account *Account, suggest *Suggest) []*Account {
 			}
 			if !existsMyLike {
 				if _, ok := taked[like.ID]; !ok {
-					suggestIDs = append(suggestIDs, like.ID)
+					*suggestIDs = append(*suggestIDs, like.ID)
 					taked[like.ID] = true
 				}
 			}
 		}
-		sort.Sort(suggestIDs[prevSug:])
-		prevSug = len(suggestIDs)
-		if len(suggestIDs) >= suggest.Limit {
+		sort.Sort((*suggestIDs)[prevSug:])
+		prevSug = len(*suggestIDs)
+		if len(*suggestIDs) >= suggest.Limit() {
 			break
 		}
 	}
 
-	// sort.Sort(suggestIDs)
-
-	for _, suggestID := range suggestIDs {
-		suggestAccounts = append(suggestAccounts, store.get(suggestID))
-		if len(suggestAccounts) >= suggest.Limit {
+	for _, suggestID := range *suggestIDs {
+		*accounts = append(*accounts, store.get(suggestID))
+		if len(*accounts) >= suggest.Limit() {
 			break
 		}
 	}
-	// fmt.Println("similar likers =", len(ids))
-	// fmt.Println("filtered similar likers =", similarLikers.Len())
-
-	return suggestAccounts
 }
 
 type SimilarLikers struct {
@@ -92,6 +84,23 @@ type SimilarLikers struct {
 	account   *Account
 	likers    []*Account
 	likerSims []float64
+}
+
+var similarLikersPool = sync.Pool{
+	New: func() interface{} {
+		return &SimilarLikers{
+			likers:    make([]*Account, 0, 4*1024),
+			likerSims: make([]float64, 0, 4*1024),
+		}
+	},
+}
+
+func BorrowSimilarLikers(store *Store, account *Account) *SimilarLikers {
+	sl := similarLikersPool.Get().(*SimilarLikers)
+	sl.Reset()
+	sl.store = store
+	sl.account = account
+	return sl
 }
 
 func NewSimilarLikers(store *Store, account *Account, capacity int) *SimilarLikers {
@@ -103,9 +112,18 @@ func NewSimilarLikers(store *Store, account *Account, capacity int) *SimilarLike
 	}
 }
 
+func (sm *SimilarLikers) Reset() {
+	sm.likers = sm.likers[:0]
+	sm.likerSims = sm.likerSims[:0]
+}
+
+func (sm *SimilarLikers) Release() {
+	similarLikersPool.Put(sm)
+}
+
 func (sm *SimilarLikers) Add(liker *Account) {
 	sm.likers = append(sm.likers, liker)
-	sm.likerSims = append(sm.likerSims, Similarity(sm.account, liker))
+	sm.likerSims = append(sm.likerSims, sm.store.Similarity(sm.account, liker))
 	// fmt.Printf("id = %d, sim = %f\n", liker.ID, Similarity(sm.account, liker))
 }
 

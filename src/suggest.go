@@ -3,23 +3,57 @@ package main
 import (
 	"net/url"
 	"strconv"
+	"sync"
 
 	"github.com/pkg/errors"
 )
 
 type SuggestFilter struct {
-	Country *Country
-	City    *City
+	Country Country
+	City    City
 }
 
 type Suggest struct {
 	store *Store
 	dicts *Dicts
-	// Account     *Account
-	QueryID     string
-	ExpectEmpty bool
+
+	// queryID     string
+	expectEmpty bool
+	limit       int
 	Filter      SuggestFilter
-	Limit       int
+}
+
+var suggestsPool = sync.Pool{
+	New: func() interface{} {
+		return &Suggest{}
+	},
+}
+
+func BorrowSuggest(store *Store, dicts *Dicts) *Suggest {
+	r := suggestsPool.Get().(*Suggest)
+	r.Reset()
+	r.store = store
+	r.dicts = dicts
+	return r
+}
+
+func NewSuggests(store *Store, dicts *Dicts) *Suggest {
+	return &Suggest{
+		store: store,
+		dicts: dicts,
+	}
+}
+
+func (suggest *Suggest) Release() {
+	suggestsPool.Put(suggest)
+}
+
+func (suggest *Suggest) Reset() {
+	// suggest.queryID = ""
+	suggest.expectEmpty = false
+	suggest.limit = 0
+	suggest.Filter.Country = 0
+	suggest.Filter.City = 0
 }
 
 func NewSuggest(store *Store, dicts *Dicts) *Suggest {
@@ -27,6 +61,14 @@ func NewSuggest(store *Store, dicts *Dicts) *Suggest {
 		store: store,
 		dicts: dicts,
 	}
+}
+
+func (suggest *Suggest) ExpectEmpty() bool {
+	return suggest.expectEmpty
+}
+
+func (suggest *Suggest) Limit() int {
+	return suggest.limit
 }
 
 func (suggest *Suggest) Parse(query string) error {
@@ -45,10 +87,10 @@ func (suggest *Suggest) Parse(query string) error {
 			return err
 		}
 	}
-	if suggest.Limit == 0 {
+	if suggest.limit == 0 {
 		return errors.New("Limit should be specified")
 	}
-	if suggest.Limit > 20 {
+	if suggest.limit > 20 {
 		return errors.New("Limit should be less or equal 20")
 	}
 	return nil
@@ -59,25 +101,25 @@ func (suggest *Suggest) ParseParam(param string, value string) error {
 	case "country":
 		country, err := suggest.dicts.GetCountry(value)
 		if err != nil {
-			suggest.ExpectEmpty = true
+			suggest.expectEmpty = true
 			return nil
 		}
-		suggest.Filter.Country = &country
+		suggest.Filter.Country = country
 	case "city":
 		city, err := suggest.dicts.GetCity(value)
 		if err != nil {
-			suggest.ExpectEmpty = true
+			suggest.expectEmpty = true
 			return nil
 		}
-		suggest.Filter.City = &city
+		suggest.Filter.City = city
 	case "limit":
 		ui64, err := strconv.ParseUint(value, 10, 8)
 		if err != nil {
 			return errors.New("Invalid limit value")
 		}
-		suggest.Limit = int(ui64)
+		suggest.limit = int(ui64)
 	case "query_id":
-		suggest.QueryID = value
+		// suggest.queryID = value
 	default:
 		return errors.New("Unknown suggest param")
 	}
@@ -85,32 +127,35 @@ func (suggest *Suggest) ParseParam(param string, value string) error {
 	return nil
 }
 
-func Similarity(me *Account, account *Account) float64 {
+func (store *Store) Similarity(me *Account, account *Account) float64 {
 	similarity := float64(0)
 
-	if len(me.Likes) == 0 {
+	meLikes := store.index.Liker.Find(me.ID)
+	accountLikes := store.index.Liker.Find(account.ID)
+
+	if len(meLikes) == 0 {
 		return similarity
 	}
 
 	i := 0
 	j := 0
 
-	for i < len(me.Likes) && j < len(account.Likes) {
-		myTsTotal := uint64(me.Likes[i].Ts)
+	for i < len(meLikes) && j < len(accountLikes) {
+		myTsTotal := uint64(meLikes[i].Ts)
 		myTsCount := uint64(1)
 		i++
 
-		for i < len(me.Likes) && me.Likes[i-1].ID == me.Likes[i].ID {
-			myTsTotal += uint64(me.Likes[i].Ts)
+		for i < len(meLikes) && meLikes[i-1].ID == meLikes[i].ID {
+			myTsTotal += uint64(meLikes[i].Ts)
 			myTsCount++
 			i++
 		}
 
 		anotherTsTotal := uint64(0)
 		anotherTsCount := uint64(0)
-		for j < len(account.Likes) && account.Likes[j].ID >= me.Likes[i-1].ID {
-			if account.Likes[j].ID == me.Likes[i-1].ID {
-				anotherTsTotal += uint64(account.Likes[j].Ts)
+		for j < len(accountLikes) && accountLikes[j].ID >= meLikes[i-1].ID {
+			if accountLikes[j].ID == meLikes[i-1].ID {
+				anotherTsTotal += uint64(accountLikes[j].Ts)
 				anotherTsCount++
 			}
 			j++

@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -12,64 +13,174 @@ import (
 type Year uint16
 
 type Filter struct {
-	parser      *Parser
-	dicts       *Dicts
-	QueryID     *string
-	NoFilter    bool
-	ExpectEmpty bool
-	Fields      struct {
-		Sex       bool
-		Email     bool
-		Status    bool
-		Fname     bool
-		Sname     bool
-		Phone     bool
-		Country   bool
-		City      bool
-		Birth     bool
-		Interests bool
-		Likes     bool
-		Premium   bool
+	parser *Parser
+	dicts  *Dicts
 
-		Limit             *uint8
-		SexEq             *byte
-		EmailDomain       *string
-		EmailLt           *string
-		EmailGt           *string
-		StatusEq          *byte
-		StatusNeq         *byte
-		FnameEq           *Fname
-		FnameAny          *[]Fname
-		FnameNull         *bool
-		SnameEq           *Sname
-		SnameStarts       *string
-		SnameNull         *bool
-		PhoneCode         *uint16
-		PhoneNull         *bool
-		CountryEq         *Country
-		CountryNull       *bool
-		CityEq            *City
-		CityAny           *[]City
-		CityNull          *bool
-		BirthLt           *int64
-		BirthGt           *int64
-		BirthYear         *Year
-		BirthYearGte      *int64
-		BirthYearLte      *int64
-		InterestsContains *[]Interest
-		InterestsAny      *[]Interest
-		LikesContains     *[]uint32
-		PremiumNow        *bool
-		PremiumNull       *bool
-	}
+	// queryID     string
+	noFilter    bool
+	expectEmpty bool
+	limit       int
+
+	sex       bool
+	email     bool
+	status    bool
+	fname     bool
+	sname     bool
+	phone     bool
+	country   bool
+	city      bool
+	birth     bool
+	interests bool
+	likes     bool
+	premium   bool
+
+	SexEq             byte
+	EmailDomain       string
+	EmailLt           string
+	EmailGt           string
+	StatusEq          byte
+	StatusNeq         byte
+	FnameEq           Fname
+	FnameAny          []Fname
+	FnameNull         bool
+	FnameNullSet      bool
+	SnameEq           Sname
+	SnameStarts       string
+	SnameNull         bool
+	SnameNullSet      bool
+	PhoneCode         uint16
+	PhoneNull         bool
+	PhoneNullSet      bool
+	CountryEq         Country
+	CountryNull       bool
+	CountryNullSet    bool
+	CityEq            City
+	CityAny           []City
+	CityNull          bool
+	CityNullSet       bool
+	BirthLt           int64
+	BirthGt           int64
+	BirthYear         Year
+	BirthYearGte      int64
+	BirthYearLte      int64
+	InterestsContains []Interest
+	InterestsAny      []Interest
+	LikesContains     []uint32
+	PremiumNow        bool
+	PremiumNull       bool
+	PremiumNullSet    bool
+}
+
+var filtersPool = sync.Pool{
+	New: func() interface{} {
+		return &Filter{
+			FnameAny:          make([]Fname, 0, 16),
+			CityAny:           make([]City, 0, 16),
+			InterestsContains: make([]Interest, 0, 16),
+			InterestsAny:      make([]Interest, 0, 16),
+		}
+	},
+}
+
+// type FiltersPool struct {
+// 	parser *Parser
+// 	dicts  *Dicts
+// 	pool   chan *Filter
+// }
+
+// func NewFiltersPool(parser *Parser, dicts *Dicts) *FiltersPool {
+// 	return &FiltersPool{
+// 		parser: parser,
+// 		dicts:  dicts,
+// 		pool:   make(chan *Filter, 100),
+// 	}
+// }
+
+func BorrowFilter(parser *Parser, dicts *Dicts) *Filter {
+	f := filtersPool.Get().(*Filter)
+	f.Reset()
+	f.parser = parser
+	f.dicts = dicts
+	return f
 }
 
 func NewFilter(parser *Parser, dicts *Dicts) *Filter {
 	return &Filter{
-		parser:   parser,
-		dicts:    dicts,
-		NoFilter: true,
+		parser: parser,
+		dicts:  dicts,
 	}
+}
+
+func (filter *Filter) Release() {
+	filtersPool.Put(filter)
+}
+
+func (filter *Filter) Reset() {
+	// filter.queryID = ""
+	filter.noFilter = true
+	filter.expectEmpty = false
+	filter.limit = 0
+
+	filter.sex = false
+	filter.email = false
+	filter.status = false
+	filter.fname = false
+	filter.sname = false
+	filter.phone = false
+	filter.country = false
+	filter.city = false
+	filter.birth = false
+	filter.interests = false
+	filter.likes = false
+	filter.premium = false
+
+	filter.SexEq = 0
+	filter.EmailDomain = ""
+	filter.EmailLt = ""
+	filter.EmailGt = ""
+	filter.StatusEq = 0
+	filter.StatusNeq = 0
+	filter.FnameEq = 0
+	filter.FnameAny = filter.FnameAny[:0]
+	filter.FnameNull = false
+	filter.FnameNullSet = false
+	filter.SnameEq = 0
+	filter.SnameStarts = ""
+	filter.SnameNull = false
+	filter.SnameNullSet = false
+	filter.PhoneCode = 0
+	filter.PhoneNull = false
+	filter.PhoneNullSet = false
+	filter.CountryEq = 0
+	filter.CountryNull = false
+	filter.CountryNullSet = false
+	filter.CityEq = 0
+	filter.CityAny = filter.CityAny[:0]
+	filter.CityNull = false
+	filter.CityNullSet = false
+	filter.BirthLt = 0
+	filter.BirthGt = 0
+	filter.BirthYear = 0
+	filter.BirthYearGte = 0
+	filter.BirthYearLte = 0
+	filter.InterestsContains = filter.InterestsContains[:0]
+	filter.InterestsAny = filter.InterestsAny[:0]
+	filter.LikesContains = filter.LikesContains[:0]
+	filter.PremiumNow = false
+	filter.PremiumNull = false
+	filter.PremiumNullSet = false
+}
+
+func (filter *Filter) ExpectEmpty() bool {
+	return filter.expectEmpty
+}
+
+func (filter *Filter) NoFilter() bool {
+	return filter.noFilter
+}
+
+func (filter *Filter) Limit() int {
+	return filter.limit
 }
 
 func (filter *Filter) Parse(query string) error {
@@ -89,101 +200,88 @@ func (filter *Filter) Parse(query string) error {
 		}
 	}
 
-	fields := &filter.Fields
-
-	if fields.Limit == nil {
+	if filter.limit == 0 {
 		return errors.New("Limit should be specified")
 	}
 
-	filter.NoFilter = !fields.Sex &&
-		!fields.Email &&
-		!fields.Status &&
-		!fields.Fname &&
-		!fields.Sname &&
-		!fields.Phone &&
-		!fields.Country &&
-		!fields.City &&
-		!fields.Birth &&
-		!fields.Interests &&
-		!fields.Likes &&
-		!fields.Premium
+	filter.noFilter = !filter.sex &&
+		!filter.email &&
+		!filter.status &&
+		!filter.fname &&
+		!filter.sname &&
+		!filter.phone &&
+		!filter.country &&
+		!filter.city &&
+		!filter.birth &&
+		!filter.interests &&
+		!filter.likes &&
+		!filter.premium
 
-	if fields.StatusEq != nil && fields.StatusNeq != nil && *fields.StatusEq == *fields.StatusNeq {
-		filter.ExpectEmpty = true
+	if filter.StatusEq != 0 && filter.StatusNeq != 0 && filter.StatusEq == filter.StatusNeq {
+		filter.expectEmpty = true
 	}
 
-	if fields.CountryEq != nil {
-		if fields.CityEq != nil {
-			if !filter.dicts.ExistsCityInCountry(*fields.CityEq, *fields.CountryEq) {
-				filter.ExpectEmpty = true
+	if filter.CountryEq != 0 {
+		if filter.CityEq != 0 {
+			if !filter.dicts.ExistsCityInCountry(filter.CityEq, filter.CountryEq) {
+				filter.expectEmpty = true
 			}
 		}
-
-		if fields.CityAny != nil {
+		if len(filter.CityAny) > 0 {
 			anyExists := false
-			for _, city := range *fields.CityAny {
-				if filter.dicts.ExistsCityInCountry(city, *fields.CountryEq) {
+			for _, city := range filter.CityAny {
+				if filter.dicts.ExistsCityInCountry(city, filter.CountryEq) {
 					anyExists = true
 				}
 			}
 			if !anyExists {
-				filter.ExpectEmpty = true
+				filter.expectEmpty = true
 			}
 		}
 	}
-
 	return nil
 }
 
 func (filter *Filter) ParseParam(param string, value string) error {
-	fields := &filter.Fields
-
 	switch param {
 	case "sex_eq":
 		sex, err := filter.parser.ParseSex(value)
 		if err != nil {
 			return err
 		}
-		fields.SexEq = &sex
-		fields.Sex = true
-		// filter.NoFilter = false
+		filter.SexEq = sex
+		filter.sex = true
 	case "email_domain":
-		fields.EmailDomain = &value
-		fields.Email = true
-		// filter.NoFilter = false
+		filter.EmailDomain = value
+		filter.email = true
 	case "email_lt":
-		fields.EmailLt = &value
-		fields.Email = true
-		// filter.NoFilter = false
+		filter.EmailLt = value
+		filter.email = true
 	case "email_gt":
-		fields.EmailGt = &value
-		fields.Email = true
-		// filter.NoFilter = false
+		filter.EmailGt = value
+		filter.email = true
 	case "status_eq":
 		status, err := filter.parser.ParseStatus(value)
 		if err != nil {
 			return err
 		}
-		fields.StatusEq = &status
-		fields.Status = true
-		// filter.NoFilter = false
+		filter.StatusEq = status
+		filter.status = true
 	case "status_neq":
 		status, err := filter.parser.ParseStatus(value)
 		if err != nil {
 			return err
 		}
-		fields.StatusNeq = &status
-		fields.Status = true
-		// filter.NoFilter = false
+		filter.StatusNeq = status
+		filter.status = true
 	case "fname_eq":
 		fname, err := filter.dicts.GetFname(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.FnameEq = &fname
-		fields.Fname = true
-		// filter.NoFilter = false
+		filter.FnameEq = fname
+		filter.fname = true
 	case "fname_any":
 		fnameAny := make([]Fname, 0)
 		for _, fnameStr := range strings.Split(value, ",") {
@@ -194,74 +292,62 @@ func (filter *Filter) ParseParam(param string, value string) error {
 			fnameAny = append(fnameAny, fname)
 		}
 		if len(fnameAny) == 0 {
-			filter.ExpectEmpty = true
+			filter.expectEmpty = true
 			return nil
 		}
-		filter.Fields.FnameAny = &fnameAny
-		fields.Fname = true
-		// filter.NoFilter = false
+		filter.FnameAny = fnameAny
+		filter.fname = true
 	case "fname_null":
-		fnameNull := value == "1"
-		fields.FnameNull = &fnameNull
-		fields.Fname = true
-		// filter.NoFilter = false
+		filter.FnameNull = value == "1"
+		filter.FnameNullSet = true
+		filter.fname = true
 	case "sname_eq":
 		sname, err := filter.dicts.GetSname(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.SnameEq = &sname
-		fields.Sname = true
-		// filter.NoFilter = false
+		filter.SnameEq = sname
+		filter.sname = true
 	case "sname_starts":
-		fields.SnameStarts = &value
-		fields.Sname = true
-		// filter.NoFilter = false
+		filter.SnameStarts = value
+		filter.sname = true
 	case "sname_null":
-		snameNull := value == "1"
-		fields.SnameNull = &snameNull
-		fields.Sname = true
-		// filter.NoFilter = false
+		filter.SnameNull = value == "1"
+		filter.SnameNullSet = true
+		filter.sname = true
 	case "phone_code":
 		ui64, err := strconv.ParseUint(value, 10, 16)
 		if err != nil {
 			return err
 		}
-		phoneCode := uint16(ui64)
-		fields.PhoneCode = &phoneCode
-		fields.Phone = true
-		// filter.NoFilter = false
+		filter.PhoneCode = uint16(ui64)
+		filter.phone = true
 	case "phone_null":
-		phoneNull := value == "1"
-		fields.PhoneNull = &phoneNull
-		fields.Phone = true
-		// filter.NoFilter = false
+		filter.PhoneNull = value == "1"
+		filter.PhoneNullSet = true
+		filter.phone = true
 	case "country_eq":
 		country, err := filter.dicts.GetCountry(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.CountryEq = &country
-		fields.Country = true
-		// filter.NoFilter = false
+		filter.CountryEq = country
+		filter.country = true
 	case "country_null":
-		countryNull := value == "1"
-		fields.CountryNull = &countryNull
-		fields.Country = true
-		// filter.NoFilter = false
+		filter.CountryNull = value == "1"
+		filter.CountryNullSet = true
+		filter.country = true
 	case "city_eq":
 		city, err := filter.dicts.GetCity(value)
 		if err != nil {
-			filter.ExpectEmpty = true
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.CityEq = &city
-		fields.City = true
-		// filter.NoFilter = false
+		filter.CityEq = city
+		filter.city = true
 	case "city_any":
-		cityAny := make([]City, 0)
 		cityStrs := strings.Split(value, ",")
 		if len(cityStrs) == 0 {
 			return nil
@@ -271,132 +357,100 @@ func (filter *Filter) ParseParam(param string, value string) error {
 			if err != nil {
 				continue
 			}
-			cityAny = append(cityAny, city)
+			filter.CityAny = append(filter.CityAny, city)
 		}
-		if len(cityAny) == 0 {
-			filter.ExpectEmpty = true
+		if len(filter.CityAny) == 0 {
+			filter.expectEmpty = true
 			return nil
 		}
-		filter.Fields.CityAny = &cityAny
-		fields.City = true
-		// filter.NoFilter = false
+		filter.city = true
 	case "city_null":
-		cityNull := value == "1"
-		fields.CityNull = &cityNull
-		fields.City = true
+		filter.CityNull = value == "1"
+		filter.CityNullSet = true
+		filter.city = true
 	case "birth_lt":
 		ts, err := parseTimestamp(value)
 		if err != nil {
 			return err
 		}
-		fields.BirthLt = &ts
-		fields.Birth = true
-		// filter.NoFilter = false
+		filter.BirthLt = ts
+		filter.birth = true
 	case "birth_gt":
 		ts, err := parseTimestamp(value)
 		if err != nil {
 			return err
 		}
-		fields.BirthGt = &ts
-		fields.Birth = true
-		// filter.NoFilter = false
+		filter.BirthGt = ts
+		filter.birth = true
 	case "birth_year":
 		ui64, err := strconv.ParseUint(value, 10, 16)
 		if err != nil {
 			return err
 		}
-		birthYear := Year(ui64)
-		fields.BirthYear = &birthYear
-		fields.Birth = true
+		filter.BirthYear = Year(ui64)
+		filter.birth = true
 
-		birthYearGte, birthYearLte := YearToTimestamp(birthYear)
-		fields.BirthYearGte = &birthYearGte
-		fields.BirthYearLte = &birthYearLte
-
-		// filter.NoFilter = false
+		birthYearGte, birthYearLte := YearToTimestamp(filter.BirthYear)
+		filter.BirthYearGte = birthYearGte
+		filter.BirthYearLte = birthYearLte
 	case "interests_contains":
-		interestsContains := make([]Interest, 0)
 		interestsContainsStr := strings.Split(value, ",")
 		for _, interestStr := range interestsContainsStr {
 			interest, err := filter.dicts.GetInterest(interestStr)
 			if err != nil {
 				continue
 			}
-			interestsContains = append(interestsContains, interest)
+			filter.InterestsContains = append(filter.InterestsContains, interest)
 		}
-		if len(interestsContains) != len(interestsContainsStr) {
-			filter.ExpectEmpty = true
+		if len(filter.InterestsContains) != len(interestsContainsStr) {
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.InterestsContains = &interestsContains
-		fields.Interests = true
-		// filter.NoFilter = false
-		// interestsContains := strings.Split(value, ",")
-		// fields.InterestsContains = &interestsContains
+		filter.interests = true
 	case "interests_any":
-		interestsAny := make([]Interest, 0)
 		interestsAnyStr := strings.Split(value, ",")
 		for _, interestStr := range interestsAnyStr {
 			interest, err := filter.dicts.GetInterest(interestStr)
 			if err != nil {
 				continue
 			}
-			interestsAny = append(interestsAny, interest)
+			filter.InterestsAny = append(filter.InterestsAny, interest)
 		}
-		if len(interestsAny) == 0 {
-			filter.ExpectEmpty = true
+		if len(filter.InterestsAny) == 0 {
+			filter.expectEmpty = true
 			return nil
 		}
-		fields.InterestsAny = &interestsAny
-		fields.Interests = true
-		// filter.NoFilter = false
-		// interesetsAny := strings.Split(value, ",")
-		// fields.InterestsAny = &interesetsAny
+		filter.interests = true
 	case "likes_contains":
-		likeContains := make([]uint32, 0)
 		likes := strings.Split(value, ",")
 		for _, like := range likes {
 			ui64, err := strconv.ParseUint(like, 10, 32)
 			if err != nil {
 				return err
 			}
-			likeContains = append(likeContains, uint32(ui64))
+			filter.LikesContains = append(filter.LikesContains, uint32(ui64))
 		}
-		fields.LikesContains = &likeContains
-		fields.Likes = true
-		// filter.NoFilter = false
+		filter.likes = true
 	case "premium_now":
-		premiumNow := true
-		fields.PremiumNow = &premiumNow
-		fields.Premium = true
-		// filter.NoFilter = false
+		filter.PremiumNow = true
+		filter.premium = true
 	case "premium_null":
-		premiumNull := value == "1"
-		fields.PremiumNull = &premiumNull
-		fields.Premium = true
-		// filter.NoFilter = false
+		filter.PremiumNull = value == "1"
+		filter.PremiumNullSet = true
+		filter.premium = true
 	case "limit":
-		ui64, err := strconv.ParseInt(value, 10, 8)
+		ui64, err := strconv.ParseUint(value, 10, 8)
 		if err != nil {
 			return errors.New("Invalid limit value")
 		}
-		limit := uint8(ui64)
-		fields.Limit = &limit
+		filter.limit = int(ui64)
 	case "query_id":
-		filter.QueryID = &value
+		// filter.queryID = value
 	default:
 		return errors.New("Unknown filter param")
 	}
 
 	return nil
-}
-
-func parseTimestamp(timestamp string) (int64, error) {
-	ts, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return ts, nil
 }
 
 func YearToTimestamp(year Year) (gte, lte int64) {
@@ -406,17 +460,24 @@ func YearToTimestamp(year Year) (gte, lte int64) {
 	return
 }
 
+func parseTimestamp(timestamp string) (int64, error) {
+	ts, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return ts, nil
+}
 func timestampToYear(timestamp int64) Year {
 	return Year(time.Unix(timestamp, 0).Year())
 }
 
-func (filter *Filter) Sex() bool       { return filter.Fields.Sex }
-func (filter *Filter) Status() bool    { return filter.Fields.Status }
-func (filter *Filter) Fname() bool     { return filter.Fields.Fname }
-func (filter *Filter) Sname() bool     { return filter.Fields.Sname }
-func (filter *Filter) Phone() bool     { return filter.Fields.Phone }
-func (filter *Filter) Country() bool   { return filter.Fields.Country }
-func (filter *Filter) City() bool      { return filter.Fields.City }
-func (filter *Filter) Birth() bool     { return filter.Fields.Birth }
-func (filter *Filter) Premium() bool   { return filter.Fields.Premium }
-func (filter *Filter) Interests() bool { return filter.Fields.Interests }
+func (filter *Filter) Sex() bool       { return filter.sex }
+func (filter *Filter) Status() bool    { return filter.status }
+func (filter *Filter) Fname() bool     { return filter.fname }
+func (filter *Filter) Sname() bool     { return filter.sname }
+func (filter *Filter) Phone() bool     { return filter.phone }
+func (filter *Filter) Country() bool   { return filter.country }
+func (filter *Filter) City() bool      { return filter.city }
+func (filter *Filter) Birth() bool     { return filter.birth }
+func (filter *Filter) Premium() bool   { return filter.premium }
+func (filter *Filter) Interests() bool { return filter.interests }

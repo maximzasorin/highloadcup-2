@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
-	"errors"
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/pkg/errors"
 
 	"github.com/francoispqt/gojay"
 )
@@ -31,17 +31,14 @@ func NewParser(dicts *Dicts) *Parser {
 	return &Parser{dicts}
 }
 
-func (parser *Parser) DecodeAccount(reader io.Reader, update bool) (*RawAccount, error) {
-	dec := gojay.BorrowDecoder(reader)
-	defer dec.Release()
-
-	rawAccount := &RawAccount{}
-	err := dec.Decode(parser.AccountDecodeFunc(rawAccount, update))
+func (parser *Parser) DecodeAccount(data []byte, rawAccount *RawAccount, update bool) error {
+	err := gojay.UnmarshalJSONObject(data, parser.AccountDecodeFunc(rawAccount, update))
+	// err := dec.Decode(parser.AccountDecodeFunc(rawAccount, update))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return rawAccount, nil
+	return nil
 }
 
 func (parser *Parser) DecodeAccounts(reader io.Reader) ([]*RawAccount, error) {
@@ -73,21 +70,22 @@ func (parser *Parser) DecodeAccounts(reader io.Reader) ([]*RawAccount, error) {
 	return rawAccounts, nil
 }
 
-func (parser *Parser) DecodeLikes(reader io.Reader) ([]*Like, error) {
-	dec := gojay.BorrowDecoder(reader)
-	defer dec.Release()
+func (parser *Parser) DecodeLikes(data []byte, likes *Likes) error {
+	// dec := gojay.BorrowDecoder(reader)
+	// defer dec.Release()
 
-	likes := make([]*Like, 0)
-	err := dec.Decode(gojay.DecodeObjectFunc(func(dec *gojay.Decoder, key string) error {
+	err := gojay.UnmarshalJSONObject(data, gojay.DecodeObjectFunc(func(dec *gojay.Decoder, key string) error {
+		// err := dec.Decode(gojay.DecodeObjectFunc(func(dec *gojay.Decoder, key string) error {
 		switch key {
 		case "likes":
+			i := 0
 			return dec.Array(gojay.DecodeArrayFunc(func(dec *gojay.Decoder) error {
-				like := &Like{}
-				err := dec.Object(parser.LikeDecodeFunc(like))
+				err := dec.Object(parser.LikeDecodeFunc(&likes.likes[i]))
 				if err != nil {
 					return err
 				}
-				likes = append(likes, like)
+				likes.len++
+				i++
 				return nil
 			}))
 		}
@@ -95,15 +93,13 @@ func (parser *Parser) DecodeLikes(reader io.Reader) ([]*Like, error) {
 	}))
 
 	if err != nil {
-		return make([]*Like, 0), err
+		return err
 	}
 
-	return likes, nil
+	return nil
 }
 
-func (parser *Parser) EncodeAccounts(accounts []*Account, fields SerializeFields) []byte {
-	buffer := bytes.NewBuffer([]byte(``))
-
+func (parser *Parser) EncodeAccounts(accounts AccountsBuffer, buffer io.Writer, fields SerializeFields) {
 	enc := gojay.BorrowEncoder(buffer)
 	defer enc.Release()
 
@@ -114,31 +110,25 @@ func (parser *Parser) EncodeAccounts(accounts []*Account, fields SerializeFields
 			}
 		}))
 	}))
-
-	return buffer.Bytes()
 }
 
-func (parser *Parser) EncodeGroupEntries(groupEntries []*GroupEntry, orderAsc bool) []byte {
-	buffer := bytes.NewBuffer([]byte(``))
-
+func (parser *Parser) EncodeGroupEntries(groupsBuffer *GroupsBuffer, buffer io.Writer) {
 	enc := gojay.NewEncoder(buffer)
 	defer enc.Release()
 
 	enc.Encode(gojay.EncodeObjectFunc(func(enc *gojay.Encoder) {
 		enc.AddArrayKey("groups", gojay.EncodeArrayFunc(func(enc *gojay.Encoder) {
-			if orderAsc {
-				for _, groupEntry := range groupEntries {
+			if groupsBuffer.orderAsc {
+				for _, groupEntry := range groupsBuffer.groups {
 					enc.Object(parser.EncodeGroupFunc(groupEntry))
 				}
 			} else {
-				for i := len(groupEntries) - 1; i >= 0; i-- {
-					enc.Object(parser.EncodeGroupFunc(groupEntries[i]))
+				for i := len(groupsBuffer.groups) - 1; i >= 0; i-- {
+					enc.Object(parser.EncodeGroupFunc(groupsBuffer.groups[i]))
 				}
 			}
 		}))
 	}))
-
-	return buffer.Bytes()
 }
 
 func (parser *Parser) AccountDecodeFunc(rawAccount *RawAccount, update bool) gojay.DecodeObjectFunc {
@@ -440,7 +430,7 @@ func (parser *Parser) ParseStatus(status string) (byte, error) {
 }
 
 func (parser *Parser) ParseSex(sex string) (byte, error) {
-	if sex[0] != SexFemale && sex[0] != SexMale {
+	if sex[0] != SexFemale && sex[0] != SexMale || len(sex) > 1 {
 		return 0, errors.New("Invalid account sex")
 	}
 	return sex[0], nil

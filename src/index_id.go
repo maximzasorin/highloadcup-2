@@ -24,6 +24,10 @@ func (index *IndexID) FindAll() IDS {
 	return index.ids
 }
 
+func (index *IndexID) Iter() IndexIterator {
+	return NewIndexIDIterator(index.ids)
+}
+
 func (index *IndexID) Len() int {
 	return len(index.ids)
 }
@@ -135,4 +139,144 @@ func UnionIndexes(indexes ...IDS) IDS {
 	}
 
 	return ids
+}
+
+type IndexIterator interface {
+	Cur() ID
+	Next() ID
+}
+
+var EmptyIndexIterator = &IndexIDIterator{}
+
+// ----------------------------------------------------------------------------
+
+type IndexIDIterator struct {
+	ids   IDS
+	index int
+	value ID
+}
+
+func NewIndexIDIterator(ids IDS) *IndexIDIterator {
+	value := ID(0)
+	if len(ids) > 0 {
+		value = ids[0]
+	}
+	return &IndexIDIterator{
+		ids:   ids,
+		index: 0,
+		value: value,
+	}
+}
+
+func (it *IndexIDIterator) Cur() ID {
+	return it.value
+}
+
+func (it *IndexIDIterator) Next() ID {
+	it.index++
+	if it.index < len(it.ids) {
+		it.value = it.ids[it.index]
+		return it.value
+	}
+	it.value = 0
+	return it.value
+}
+
+// ----------------------------------------------------------------------------
+
+type UnionIndexIterator struct {
+	iters []IndexIterator
+	value ID
+}
+
+func NewUnionIndexIterator(iters ...IndexIterator) IndexIterator {
+	iter := &UnionIndexIterator{
+		iters: iters,
+	}
+	iter.Next()
+	return iter
+}
+
+func (it *UnionIndexIterator) Next() ID {
+	maxID := ID(0)
+	for _, iter := range it.iters {
+		if iter.Cur() != 0 && iter.Cur() > maxID {
+			maxID = iter.Cur()
+		}
+	}
+	if maxID > 0 {
+		for _, iter := range it.iters {
+			if iter.Cur() != 0 && iter.Cur() == maxID {
+				iter.Next()
+			}
+		}
+
+	}
+	it.value = maxID
+	return it.value
+}
+
+func (it *UnionIndexIterator) Cur() ID {
+	return it.value
+}
+
+// ----------------------------------------------------------------------------
+
+type IntersectIndexIterator struct {
+	iters  []IndexIterator
+	cur    IndexIterator
+	value  ID
+	finish bool
+}
+
+func NewIntersectIndexIterator(iters ...IndexIterator) IndexIterator {
+	minIt := -1
+	for i, iter := range iters {
+		if minIt == -1 || iter.Cur() < iters[minIt].Cur() {
+			minIt = i
+		}
+	}
+	iter := &IntersectIndexIterator{
+		iters: append(iters[:minIt], iters[minIt:]...),
+		cur:   iters[minIt],
+	}
+	iter.Next()
+	return iter
+}
+
+func (it *IntersectIndexIterator) Next() ID {
+	if it.finish {
+		return 0
+	}
+	for {
+		founded := true
+		for _, iter := range it.iters {
+			for iter.Cur() != 0 && iter.Cur() > it.cur.Cur() {
+				iter.Next()
+			}
+			if iter.Cur() == 0 {
+				it.finish = true
+				it.value = 0
+				return it.value
+			}
+			if iter.Cur() != it.cur.Cur() {
+				founded = false
+			}
+		}
+		if founded {
+			it.value = it.cur.Cur()
+			it.cur.Next()
+			return it.value
+		}
+		it.cur.Next()
+		if it.cur.Cur() == 0 {
+			it.finish = true
+			it.value = 0
+			return it.value
+		}
+	}
+}
+
+func (it *IntersectIndexIterator) Cur() ID {
+	return it.value
 }

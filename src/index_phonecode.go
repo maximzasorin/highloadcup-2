@@ -90,6 +90,17 @@ func (index *IndexPhoneCode) Find(phoneCode uint16) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexPhoneCode) Iter(phoneCode uint16) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.phoneCodes[phoneCode]; ok {
+		iter := index.phoneCodes[phoneCode].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexPhoneCode) Len() int {
 	index.rwLock.RLock()
 	phoneCodesLen := len(index.phoneCodes)

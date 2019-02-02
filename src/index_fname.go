@@ -90,6 +90,17 @@ func (index *IndexFname) Find(fname Fname) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexFname) Iter(fname Fname) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.fnames[fname]; ok {
+		iter := index.fnames[fname].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexFname) Len() int {
 	index.rwLock.RLock()
 	fnamesLen := len(index.fnames)

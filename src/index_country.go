@@ -90,6 +90,17 @@ func (index *IndexCountry) Find(country Country) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexCountry) Iter(country Country) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.countries[country]; ok {
+		iter := index.countries[country].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexCountry) Count(country Country) (count int) {
 	index.rwLock.RLock()
 	if _, ok := index.countries[country]; ok {

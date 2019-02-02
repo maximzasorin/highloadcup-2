@@ -36,23 +36,3 @@
 [[constraint]]
   name = "github.com/pkg/errors"
   version = "0.8.0"
-
-[[constraint]]
-  branch = "master"
-  name = "github.com/google/btree"
-
-[[constraint]]
-  name = "github.com/Workiva/go-datastructures"
-  version = "1.0.50"
-
-[[constraint]]
-  name = "github.com/ancientlore/go-avltree"
-  version = "1.0.1"
-
-[[constraint]]
-  name = "github.com/HuKeping/rbtree"
-  version = "1.0.0"
-
-[[constraint]]
-  name = "github.com/emirpasic/gods"
-  version = "1.12.0"

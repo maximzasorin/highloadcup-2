@@ -1,288 +1,222 @@
 package main
 
 import (
-	"sort"
 	"strings"
 )
 
-func (store *Store) FilterAll(filter *Filter) []*Account {
-	accounts := make([]*Account, 0, 50)
-
-	if filter.ExpectEmpty {
-		return accounts
+func (store *Store) Filter(filter *Filter, accounts *AccountsBuffer) {
+	if filter.ExpectEmpty() {
+		return
 	}
 
-	// scan all
-	count := uint8(1)
-	for _, id := range store.findIds(filter) {
-		account := store.get(id)
+	it := store.findIds(filter)
 
-		if !filter.NoFilter && !store.filterAccount(account, filter) {
+	for it.Cur() != 0 {
+		account := store.get(it.Cur())
+
+		if !filter.NoFilter() && !store.filterAccount(account, filter) {
+			it.Next()
 			continue
 		}
 
-		accounts = append(accounts, account)
+		*accounts = append(*accounts, account)
 
-		if count >= *filter.Fields.Limit {
+		if len(*accounts) >= filter.Limit() {
 			break
 		}
-		count++
+		it.Next()
 	}
 
-	return accounts
+	// for _, id := range store.findIds(filter) {
+	// 	account := store.get(id)
+
+	// 	if !filter.NoFilter && !store.filterAccount(account, filter) {
+	// 		continue
+	// 	}
+
+	// 	accounts = append(accounts, account)
+
+	// 	if len(accounts) >= filter.Limit {
+	// 		break
+	// 	}
+	// }
 }
 
-func (store *Store) findIds(filter *Filter) IDS {
-	fields := &filter.Fields
-
-	if fields.LikesContains != nil {
-		if len(*fields.LikesContains) == 1 {
-			likee := (*fields.LikesContains)[0]
-			fields.LikesContains = nil
-			return store.indexLikee.Find(ID(likee))
+func (store *Store) findIds(filter *Filter) IndexIterator {
+	if len(filter.LikesContains) > 0 {
+		if len(filter.LikesContains) == 1 {
+			likee := filter.LikesContains[0]
+			filter.LikesContains = filter.LikesContains[:0]
+			return store.index.Likee.Iter(ID(likee))
+			// return store.index.Likee.Find(ID(likee))
 		}
-
-		likersAll := make([]IDS, len(*fields.LikesContains))
-		for i, likeeContains := range *fields.LikesContains {
-			likersAll[i] = store.indexLikee.Find(ID(likeeContains))
+		likersAll := make([]IndexIterator, len(filter.LikesContains))
+		// likersAll := BorrowIndexIterators()
+		// defer likersAll.Release()
+		for i, likeeContains := range filter.LikesContains {
+			// likersAll[i] = store.index.Likee.Find(ID(likeeContains))
+			likersAll[i] = store.index.Likee.Iter(ID(likeeContains))
 		}
-
-		likers := make(IDS, 0)
-
-		firstI := 0
-		for _, liker := range likersAll[firstI] {
-			exists := true
-			for i := 0; i < len(likersAll); i++ {
-				if i == firstI {
-					continue
-				}
-				likerIndex := sort.Search(len(likersAll[i]), func(j int) bool {
-					return likersAll[i][j] <= liker
-				})
-				if likerIndex == len(likersAll[i]) || likersAll[i][likerIndex] != liker {
-					exists = false
-					break
-				}
-			}
-			if exists {
-				likers = append(likers, liker)
-			}
-		}
-
-		fields.LikesContains = nil
-		return likers
+		filter.LikesContains = nil
+		return NewIntersectIndexIterator(likersAll...)
+		// return IntersectIndexes(likersAll...)
 	}
-
-	if fields.CityEq != nil {
-		city := *fields.CityEq
-		fields.CityEq = nil
-		return store.indexCity.Find(city)
+	if filter.CityEq != 0 {
+		city := filter.CityEq
+		filter.CityEq = 0
+		// return store.index.City.Find(city)
+		return store.index.City.Iter(city)
 	}
-
-	if fields.BirthYear != nil {
-		birthYear := *fields.BirthYear
-		fields.BirthYear = nil
-		return store.indexBirthYear.Find(birthYear)
+	if filter.BirthYear != 0 {
+		birthYear := filter.BirthYear
+		filter.BirthYear = 0
+		// return store.index.BirthYear.Find(birthYear)
+		if filter.CityNullSet && filter.CityNull {
+			filter.CityNullSet = false
+			// return store.index.City.Find(0)
+			return NewIntersectIndexIterator(
+				store.index.BirthYear.Iter(birthYear),
+				store.index.City.Iter(0),
+			)
+		}
+		return store.index.BirthYear.Iter(birthYear)
 	}
-
-	if fields.PhoneCode != nil {
-		phoneCode := *fields.PhoneCode
-		fields.PhoneCode = nil
-		return store.indexPhoneCode.Find(phoneCode)
+	if filter.PhoneCode != 0 {
+		phoneCode := filter.PhoneCode
+		filter.PhoneCode = 0
+		// return store.index.PhoneCode.Find(phoneCode)
+		return store.index.PhoneCode.Iter(phoneCode)
 	}
-
-	if fields.InterestsContains != nil {
-		if len(*fields.InterestsContains) == 1 {
-			interest := (*fields.InterestsContains)[0]
-			fields.InterestsContains = nil
-			return store.indexInterest.Find(interest)
+	if len(filter.InterestsContains) > 0 {
+		if len(filter.InterestsContains) == 1 {
+			interest := filter.InterestsContains[0]
+			filter.InterestsContains = filter.InterestsContains[:0]
+			// return store.index.Interest.Find(interest)
+			return store.index.Interest.Iter(interest)
 		}
-
-		interestsAll := make([]IDS, len(*fields.InterestsContains))
-		for i, interestContains := range *fields.InterestsContains {
-			interestsAll[i] = store.indexInterest.Find(interestContains)
+		interestsAll := make([]IndexIterator, len(filter.InterestsContains))
+		// interestsAll := BorrowIndexIterators()
+		// defer interestsAll.Release()
+		for i, interestContains := range filter.InterestsContains {
+			// interestsAll[i] = store.index.Interest.Find(interestContains)
+			interestsAll[i] = store.index.Interest.Iter(interestContains)
 		}
-
-		ids := make(IDS, 0)
-
-		firstI := 0
-		for _, ID := range interestsAll[firstI] {
-			exists := true
-			for i := 0; i < len(interestsAll); i++ {
-				if i == firstI {
-					continue
-				}
-				interestIndex := sort.Search(len(interestsAll[i]), func(j int) bool {
-					return interestsAll[i][j] <= ID
-				})
-				if interestIndex == len(interestsAll[i]) || interestsAll[i][interestIndex] != ID {
-					exists = false
-					break
-				}
-			}
-			if exists {
-				ids = append(ids, ID)
-			}
+		filter.InterestsContains = filter.InterestsContains[:0]
+		if filter.CountryNullSet && filter.CountryNull {
+			filter.CountryNullSet = false
+			interestsAll = append(interestsAll, store.index.Country.Iter(0))
 		}
-
-		fields.InterestsContains = nil
-		return ids
+		return NewIntersectIndexIterator((interestsAll)...)
+		// return IntersectIndexes(interestsAll...)
 	}
+	if len(filter.InterestsAny) > 0 {
+		interestsAny := make([]IndexIterator, len(filter.InterestsAny))
+		// interestsAny := BorrowIndexIterators()
+		// defer interestsAny.Release()
 
-	// if fields.InterestsAny != nil {
-
-	// }
-
-	if fields.CityAny != nil {
-		citiesCur := make([]uint32, len(*fields.CityAny))
-
-		citiesAny := make([]IDS, len(*fields.CityAny))
-		for i, cityAny := range *fields.CityAny {
-			citiesAny[i] = store.indexCity.Find(cityAny)
+		for i, interestAny := range filter.InterestsAny {
+			interestsAny[i] = store.index.Interest.Iter(interestAny)
 		}
-
-		ids := make(IDS, 0)
-		for {
-			maxID := ID(0)
-			maxCity := -1
-			for i, cityCur := range citiesCur {
-				if cityCur < uint32(len(citiesAny[i])) && citiesAny[i][cityCur] > maxID {
-					maxID = citiesAny[i][cityCur]
-					maxCity = i
-				}
-			}
-
-			if maxID > 0 {
-				ids = append(ids, maxID)
-				citiesCur[maxCity]++
-			} else {
-				break
-			}
+		filter.InterestsAny = filter.InterestsAny[:0]
+		interestsIt := NewUnionIndexIterator((interestsAny)...)
+		if filter.CountryEq != 0 {
+			country := filter.CountryEq
+			filter.CountryEq = 0
+			// return store.index.Country.Find(country)
+			return NewIntersectIndexIterator(interestsIt, store.index.Country.Iter(country))
 		}
-
-		return ids
+		return interestsIt
 	}
+	if len(filter.CityAny) > 0 {
+		citiesAny := make([]IndexIterator, len(filter.CityAny))
+		// citiesAny := BorrowIndexIterators()
+		// defer citiesAny.Release()
 
-	if fields.FnameAny != nil {
-		fnamesCur := make([]uint32, len(*fields.FnameAny))
-
-		fnamesAny := make([]IDS, len(*fields.FnameAny))
-		for i, fnameAny := range *fields.FnameAny {
-			fnamesAny[i] = store.indexFname.Find(fnameAny)
+		for i, cityAny := range filter.CityAny {
+			citiesAny[i] = store.index.City.Iter(cityAny)
 		}
-
-		ids := make(IDS, 0)
-		for {
-			maxID := ID(0)
-			maxFname := -1
-			for i, fnameCur := range fnamesCur {
-				if fnameCur < uint32(len(fnamesAny[i])) && fnamesAny[i][fnameCur] > maxID {
-					maxID = fnamesAny[i][fnameCur]
-					maxFname = i
-				}
-			}
-
-			if maxID > 0 {
-				ids = append(ids, maxID)
-				fnamesCur[maxFname]++
-			} else {
-				break
-			}
-		}
-
-		return ids
+		filter.CityAny = filter.CityAny[:0]
+		return NewUnionIndexIterator((citiesAny)...)
 	}
+	if len(filter.FnameAny) > 0 {
+		// fnamesAny := make([]IDS, len(filter.FnameAny))
+		fnamesAny := make([]IndexIterator, len(filter.FnameAny))
+		// fnamesAny := BorrowIndexIterators()
+		// defer fnamesAny.Release()
 
-	if fields.CityNull != nil {
-		if *fields.CityNull {
-			fields.CityNull = nil
-			return store.indexCity.Find(0)
+		for i, fnameAny := range filter.FnameAny {
+			// fnamesAny[i] = store.index.Fname.Find(fnameAny)
+			// fnamesAny[i] = store.index.Fname.Iter(fnameAny)
+			fnamesAny[i] = store.index.Fname.Iter(fnameAny)
+		}
+		filter.FnameAny = filter.FnameAny[:0]
+		if filter.CountryEq != 0 {
+			country := filter.CountryEq
+			filter.CountryEq = 0
+			// return store.index.Country.Find(country)
+			return NewIntersectIndexIterator(
+				NewUnionIndexIterator((fnamesAny)...),
+				store.index.Country.Iter(country),
+			)
+		}
+		return NewUnionIndexIterator((fnamesAny)...)
+		// return UnionIndexes(fnamesAny...)
+	}
+	if filter.CityNullSet {
+		if filter.CityNull {
+			filter.CityNullSet = false
+			// return store.index.City.Find(0)
+			return store.index.City.Iter(0)
 		}
 	}
-
-	if fields.CountryEq != nil {
-		country := *fields.CountryEq
-		fields.CountryEq = nil
-		return store.indexCountry.Find(country)
+	if filter.CountryEq != 0 {
+		country := filter.CountryEq
+		filter.CountryEq = 0
+		// return store.index.Country.Find(country)
+		return store.index.Country.Iter(country)
 	}
-
-	if fields.CountryNull != nil {
-		if *fields.CountryNull {
-			fields.CountryNull = nil
-			return store.indexCountry.Find(0)
+	if filter.CountryNullSet {
+		if filter.CountryNull {
+			filter.CountryNullSet = false
+			// return store.index.Country.Find(0)
+			return store.index.Country.Iter(0)
 		}
 	}
-
-	return store.indexID.FindAll()
+	// return store.index.ID.FindAll()
+	return store.index.ID.Iter()
 }
 
 func (store *Store) filterAccount(account *Account, filter *Filter) bool {
-	fields := &filter.Fields
-
-	if fields.SexEq != nil {
-		if account.Sex != *fields.SexEq {
+	if filter.SexEq != 0 {
+		if account.Sex != filter.SexEq {
 			return false
 		}
 	}
-
-	if fields.EmailDomain != nil {
-		if account.Email[account.EmailDomain:] != *fields.EmailDomain {
+	if filter.EmailDomain != "" {
+		if account.Email[account.EmailDomain:] != filter.EmailDomain {
 			return false
 		}
 	}
-
-	if fields.EmailGt != nil {
-		if strings.Compare(account.Email, *fields.EmailGt) != +1 {
+	if filter.StatusEq != 0 {
+		if account.Status != filter.StatusEq {
 			return false
 		}
 	}
-
-	if fields.EmailLt != nil {
-		if strings.Compare(account.Email, *fields.EmailLt) != -1 {
+	if filter.StatusNeq != 0 {
+		if account.Status == filter.StatusNeq {
 			return false
 		}
 	}
-
-	if fields.StatusEq != nil {
-		if account.Status != *fields.StatusEq {
-			return false
-		}
-	}
-
-	if fields.StatusNeq != nil {
-		if account.Status == *fields.StatusNeq {
-			return false
-		}
-	}
-
-	if fields.FnameEq != nil {
+	if filter.FnameEq != 0 {
 		if account.Fname == 0 {
 			return false
 		}
-
-		if account.Fname != *fields.FnameEq {
+		if account.Fname != filter.FnameEq {
 			return false
 		}
 	}
-
-	if fields.FnameAny != nil {
-		if account.Fname == 0 {
-			return false
-		}
-
-		any := false
-		for _, fname := range *fields.FnameAny {
-			if fname == account.Fname {
-				any = true
-			}
-		}
-		if !any {
-			return false
-		}
-	}
-
-	if fields.FnameNull != nil {
-		if *fields.FnameNull {
+	if filter.FnameNullSet {
+		if filter.FnameNull {
 			if account.Fname != 0 {
 				return false
 			}
@@ -292,33 +226,16 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			}
 		}
 	}
-
-	if fields.SnameEq != nil {
+	if filter.SnameEq != 0 {
 		if account.Sname == 0 {
 			return false
 		}
-
-		if account.Sname != *fields.SnameEq {
+		if account.Sname != filter.SnameEq {
 			return false
 		}
 	}
-
-	if fields.SnameStarts != nil {
-		if account.Sname == 0 {
-			return false
-		}
-
-		snameStr, err := store.dicts.GetSnameString(account.Sname)
-		if err != nil {
-			return false
-		}
-		if !strings.HasPrefix(snameStr, *fields.SnameStarts) {
-			return false
-		}
-	}
-
-	if fields.SnameNull != nil {
-		if *fields.SnameNull {
+	if filter.SnameNullSet {
+		if filter.SnameNull {
 			if account.Sname != 0 {
 				return false
 			}
@@ -328,15 +245,13 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			}
 		}
 	}
-
-	if fields.PhoneCode != nil {
-		if account.PhoneCode != *fields.PhoneCode {
+	if filter.PhoneCode != 0 {
+		if account.PhoneCode != filter.PhoneCode {
 			return false
 		}
 	}
-
-	if fields.PhoneNull != nil {
-		if *fields.PhoneNull {
+	if filter.PhoneNullSet {
+		if filter.PhoneNull {
 			if account.Phone != nil {
 				return false
 			}
@@ -346,19 +261,17 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			}
 		}
 	}
-
-	if fields.CountryEq != nil {
+	if filter.CountryEq != 0 {
 		if account.Country == 0 {
 			return false
 		}
 
-		if account.Country != *fields.CountryEq {
+		if account.Country != filter.CountryEq {
 			return false
 		}
 	}
-
-	if fields.CountryNull != nil {
-		if *fields.CountryNull {
+	if filter.CountryNullSet {
+		if filter.CountryNull {
 			if account.Country != 0 {
 				return false
 			}
@@ -368,24 +281,32 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			}
 		}
 	}
-
-	if fields.CityEq != nil {
+	if filter.PremiumNullSet {
+		if filter.PremiumNull {
+			if account.Premium != nil {
+				return false
+			}
+		} else {
+			if account.Premium == nil {
+				return false
+			}
+		}
+	}
+	if filter.CityEq != 0 {
 		if account.City == 0 {
 			return false
 		}
 
-		if account.City != *fields.CityEq {
+		if account.City != filter.CityEq {
 			return false
 		}
 	}
-
-	if fields.CityAny != nil {
+	if len(filter.CityAny) > 0 {
 		if account.City == 0 {
 			return false
 		}
-
 		any := false
-		for _, city := range *fields.CityAny {
+		for _, city := range filter.CityAny {
 			if city == account.City {
 				any = true
 			}
@@ -394,9 +315,8 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			return false
 		}
 	}
-
-	if fields.CityNull != nil {
-		if *fields.CityNull {
+	if filter.CityNullSet {
+		if filter.CityNull {
 			if account.City != 0 {
 				return false
 			}
@@ -406,31 +326,32 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			}
 		}
 	}
-
-	if fields.BirthLt != nil {
-		if int64(account.Birth) >= *fields.BirthLt {
+	if filter.BirthLt != 0 {
+		if int64(account.Birth) >= filter.BirthLt {
 			return false
 		}
 	}
-
-	if fields.BirthGt != nil {
-		if int64(account.Birth) <= *fields.BirthGt {
+	if filter.BirthGt != 0 {
+		if int64(account.Birth) <= filter.BirthGt {
 			return false
 		}
 	}
-
-	if fields.BirthYear != nil {
-		if int64(account.Birth) < *fields.BirthYearGte || int64(account.Birth) > *fields.BirthYearLte {
+	if filter.BirthYear != 0 {
+		if int64(account.Birth) < filter.BirthYearGte || int64(account.Birth) > filter.BirthYearLte {
 			return false
 		}
 	}
-
-	if fields.InterestsContains != nil {
+	if filter.PremiumNow {
+		if !store.PremiumNow(account) {
+			return false
+		}
+	}
+	if len(filter.InterestsContains) > 0 {
 		if len(account.Interests) == 0 {
 			return false
 		}
 		contains := true
-		for _, interestContains := range *fields.InterestsContains {
+		for _, interestContains := range filter.InterestsContains {
 			containsInterest := false
 			for _, interest := range account.Interests {
 				if interest == interestContains {
@@ -447,14 +368,13 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			return false
 		}
 	}
-
-	if fields.InterestsAny != nil {
+	if len(filter.InterestsAny) > 0 {
 		if len(account.Interests) == 0 {
 			return false
 		}
 
 		any := false
-		for _, interestAny := range *fields.InterestsAny {
+		for _, interestAny := range filter.InterestsAny {
 			for _, interest := range account.Interests {
 				if interest == interestAny {
 					any = true
@@ -465,16 +385,15 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			return false
 		}
 	}
-
-	if fields.LikesContains != nil {
-		if len(account.Likes) == 0 {
+	if len(filter.LikesContains) != 0 {
+		likes := store.index.Liker.Find(account.ID)
+		if len(likes) == 0 {
 			return false
 		}
-
 		contains := true
-		for _, likeID := range *fields.LikesContains {
+		for _, likeID := range filter.LikesContains {
 			containsLike := false
-			for _, like := range account.Likes {
+			for _, like := range likes {
 				if like.ID == ID(likeID) {
 					containsLike = true
 					break
@@ -489,24 +408,41 @@ func (store *Store) filterAccount(account *Account, filter *Filter) bool {
 			return false
 		}
 	}
-
-	if fields.PremiumNow != nil {
-		if !store.PremiumNow(account) {
+	if filter.SnameStarts != "" {
+		if account.Sname == 0 {
+			return false
+		}
+		snameStr, err := store.dicts.GetSnameString(account.Sname)
+		if err != nil {
+			return false
+		}
+		if !strings.HasPrefix(snameStr, filter.SnameStarts) {
 			return false
 		}
 	}
-
-	if fields.PremiumNull != nil {
-		if *fields.PremiumNull {
-			if account.Premium != nil {
-				return false
-			}
-		} else {
-			if account.Premium == nil {
-				return false
-			}
+	if filter.EmailGt != "" {
+		if strings.Compare(account.Email, filter.EmailGt) != +1 {
+			return false
 		}
 	}
-
+	if filter.EmailLt != "" {
+		if strings.Compare(account.Email, filter.EmailLt) != -1 {
+			return false
+		}
+	}
+	if len(filter.FnameAny) > 0 {
+		if account.Fname == 0 {
+			return false
+		}
+		any := false
+		for _, fname := range filter.FnameAny {
+			if fname == account.Fname {
+				any = true
+			}
+		}
+		if !any {
+			return false
+		}
+	}
 	return true
 }

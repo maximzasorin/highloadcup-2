@@ -53,3 +53,14 @@ func (index *IndexLikee) Find(likee ID) IDS {
 	index.rwLock.RUnlock()
 	return make(IDS, 0)
 }
+
+func (index *IndexLikee) Iter(likee ID) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.likees[likee]; ok {
+		iter := index.likees[likee].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}

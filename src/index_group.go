@@ -166,94 +166,17 @@ func NewIndexGroup(dicts *Dicts) *IndexGroup {
 	}
 }
 
-func (index *IndexGroup) Append(account *Account) {
-	accEntry := NewGroupEntry(0)
-	accEntry.SetSex(account.Sex)
-	accEntry.SetStatus(account.Status)
-	accEntry.SetCity(account.City)
-	accEntry.SetCountry(account.Country)
-	accEntry.SetBirth(timestampToYear(int64(account.Birth)))
-	accEntry.SetJoined(timestampToYear(int64(account.Joined)))
-
+func (index *IndexGroup) AppendHash(hash GroupHash, interests ...Interest) {
 	for filter := range index.filterGroups {
 		for _, group := range index.filterGroups[filter] {
 			if filter&GroupInterestsMask > 0 || group&GroupInterestsMask > 0 {
-				for _, interest := range account.Interests {
-					accEntry.SetInterest(interest)
-					index.appendGroup(
-						filter,
-						group,
-						accEntry.GetHash(),
-					)
+				for _, interest := range interests {
+					hash.SetInterest(interest)
+					index.appendGroup(filter, group, hash)
 				}
 			} else {
-				index.appendGroup(
-					filter,
-					group,
-					accEntry.GetHash(),
-				)
-			}
-		}
-	}
-}
-
-func (index *IndexGroup) Add(account *Account) {
-	accEntry := NewGroupEntry(0)
-	accEntry.SetSex(account.Sex)
-	accEntry.SetStatus(account.Status)
-	accEntry.SetCity(account.City)
-	accEntry.SetCountry(account.Country)
-	accEntry.SetBirth(timestampToYear(int64(account.Birth)))
-	accEntry.SetJoined(timestampToYear(int64(account.Joined)))
-
-	for filter := range index.filterGroups {
-		for _, group := range index.filterGroups[filter] {
-			if filter&GroupInterestsMask > 0 || group&GroupInterestsMask > 0 {
-				for _, interest := range account.Interests {
-					accEntry.SetInterest(interest)
-					index.addGroup(
-						filter,
-						group,
-						accEntry.GetHash(),
-					)
-				}
-			} else {
-				index.addGroup(
-					filter,
-					group,
-					accEntry.GetHash(),
-				)
-			}
-		}
-	}
-}
-
-func (index *IndexGroup) Sub(account *Account) {
-	accEntry := NewGroupEntry(0)
-	accEntry.SetSex(account.Sex)
-	accEntry.SetStatus(account.Status)
-	accEntry.SetCity(account.City)
-	accEntry.SetCountry(account.Country)
-	accEntry.SetBirth(timestampToYear(int64(account.Birth)))
-	accEntry.SetJoined(timestampToYear(int64(account.Joined)))
-
-	for filter := range index.filterGroups {
-		for _, group := range index.filterGroups[filter] {
-			if filter&GroupInterestsMask > 0 || group&GroupInterestsMask > 0 {
-				for _, interest := range account.Interests {
-					accEntry.SetInterest(interest)
-					index.subGroup(
-						filter,
-						group,
-						accEntry.GetHash(),
-					)
-				}
-			} else {
-				index.subGroup(
-					filter,
-					group,
-					accEntry.GetHash(),
-				)
+				hash.SetInterest(0)
+				index.appendGroup(filter, group, hash)
 			}
 		}
 	}
@@ -265,19 +188,11 @@ func (index *IndexGroup) AddHash(hash GroupHash, interests ...Interest) {
 			if filter&GroupInterestsMask > 0 || group&GroupInterestsMask > 0 {
 				for _, interest := range interests {
 					hash.SetInterest(interest)
-					index.addGroup(
-						filter,
-						group,
-						hash,
-					)
+					index.addGroup(filter, group, hash)
 				}
 			} else {
 				hash.SetInterest(0)
-				index.addGroup(
-					filter,
-					group,
-					hash,
-				)
+				index.addGroup(filter, group, hash)
 			}
 		}
 	}
@@ -289,19 +204,11 @@ func (index *IndexGroup) SubHash(hash GroupHash, interests ...Interest) {
 			if filter&GroupInterestsMask > 0 || group&GroupInterestsMask > 0 {
 				for _, interest := range interests {
 					hash.SetInterest(interest)
-					index.subGroup(
-						filter,
-						group,
-						hash,
-					)
+					index.subGroup(filter, group, hash)
 				}
 			} else {
 				hash.SetInterest(0)
-				index.subGroup(
-					filter,
-					group,
-					hash,
-				)
+				index.subGroup(filter, group, hash)
 			}
 		}
 	}

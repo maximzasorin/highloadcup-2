@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sort"
 	"sync"
 )
 
@@ -47,27 +46,6 @@ type Account struct {
 	Email       string
 	Premium     *Premium // optional
 	Interests   []Interest
-	Likes       AccountLikes
-	rwLock      sync.RWMutex
-}
-
-func (account *Account) AddLike(accountLike *AccountLike) {
-	account.rwLock.Lock()
-	account.Likes = append(account.Likes, *accountLike)
-	sort.Sort(account.Likes)
-	account.rwLock.Unlock()
-}
-
-func (account *Account) AppendLike(accountLike *AccountLike) {
-	account.rwLock.Lock()
-	account.Likes = append(account.Likes, *accountLike)
-	account.rwLock.Unlock()
-}
-
-func (account *Account) SortLikes() {
-	account.rwLock.Lock()
-	sort.Sort(account.Likes)
-	account.rwLock.Unlock()
 }
 
 type Like struct {
@@ -100,14 +78,95 @@ type RawAccount struct {
 	Likes       []RawLike
 }
 
-func (al AccountLikes) Len() int {
-	return len(al)
+var rawAccountsPool = sync.Pool{
+	New: func() interface{} {
+		return &RawAccount{
+			Interests: make([]string, 0, 16),
+			Likes:     make([]RawLike, 0, 32),
+		}
+	},
 }
 
-func (al AccountLikes) Swap(i, j int) {
-	al[i], al[j] = al[j], al[i]
+func BorrowRawAccount() *RawAccount {
+	rawAccount := rawAccountsPool.Get().(*RawAccount)
+	rawAccount.Reset()
+	return rawAccount
 }
 
-func (al AccountLikes) Less(i, j int) bool {
-	return al[i].ID > al[j].ID
+func (account *RawAccount) Reset() {
+	account.ID = 0
+	account.Sex = 0
+	account.Status = 0
+	account.Sname = nil
+	account.Fname = nil
+	account.Country = nil
+	account.City = nil
+	account.EmailDomain = 0
+	account.Birth = 0
+	account.Joined = 0
+	account.PhoneCode = nil
+	account.Phone = nil
+	account.Email = ""
+	account.Premium = nil
+	account.Interests = account.Interests[:0]
+	account.Likes = account.Likes[:0]
+}
+
+func (account *RawAccount) Release() {
+	rawAccountsPool.Put(account)
+}
+
+type Likes struct {
+	likes []Like
+	len   int
+}
+
+const maxLikesLen = 128
+
+var likesPool = sync.Pool{
+	New: func() interface{} {
+		return &Likes{
+			likes: make([]Like, maxLikesLen),
+		}
+	},
+}
+
+func BorrowLikes() *Likes {
+	l := likesPool.Get().(*Likes)
+	l.Reset()
+	return l
+}
+
+func (likes *Likes) Truncate() {
+	likes.likes = likes.likes[:likes.len]
+}
+
+func (likes *Likes) Reset() {
+	likes.likes = likes.likes[:maxLikesLen]
+	likes.len = 0
+}
+
+func (likes *Likes) Release() {
+	likesPool.Put(likes)
+}
+
+var idsPool = sync.Pool{
+	New: func() interface{} {
+		ids := make(IDS, 0, 4*1024)
+		return &ids
+	},
+}
+
+func BorrowIDS() *IDS {
+	ids := idsPool.Get().(*IDS)
+	ids.Reset()
+	return ids
+}
+
+func (ids *IDS) Reset() {
+	*ids = (*ids)[:0]
+}
+
+func (ids *IDS) Release() {
+	idsPool.Put(ids)
 }

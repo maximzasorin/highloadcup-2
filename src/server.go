@@ -1,16 +1,117 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"regexp"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
+
+	"github.com/valyala/fasthttp"
 )
 
+type ServerRoute uint16
+
+var defaultPostResponse = []byte("{}")
+
+const (
+	ServerRouteGetFilter ServerRoute = 1 << iota
+	ServerRouteGetGroup
+	ServerRouteGetRecommend
+	ServerRouteGetSuggest
+	ServerRoutePostNew
+	ServerRoutePostUpdate
+	ServerRoutePostLikes
+	ServerRouteAllGet  = ServerRouteGetFilter | ServerRouteGetGroup | ServerRouteGetRecommend | ServerRouteGetSuggest
+	ServerRouteAllPost = ServerRoutePostNew | ServerRoutePostUpdate | ServerRoutePostLikes
+	ServerRouteAll     = ServerRouteAllGet | ServerRouteAllPost
+)
+
+// ----
+
+type AccountsBuffer []*Account
+
+var accountsBufferPool = sync.Pool{
+	New: func() interface{} {
+		ab := make(AccountsBuffer, 0, 50)
+		return &ab
+	},
+}
+
+func BorrowAccountsBuffer() *AccountsBuffer {
+	ab := accountsBufferPool.Get().(*AccountsBuffer)
+	ab.Reset()
+	return ab
+}
+
+func (buffer *AccountsBuffer) Reset() {
+	*buffer = (*buffer)[:0]
+}
+
+func (buffer *AccountsBuffer) Release() {
+	accountsBufferPool.Put(buffer)
+}
+
+// ----
+
+type GroupsBuffer struct {
+	orderAsc bool
+	groups   []*GroupEntry
+}
+
+var groupsBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &GroupsBuffer{
+			groups: make([]*GroupEntry, 0, 50),
+		}
+	},
+}
+
+func BorrowGroupsBuffer() *GroupsBuffer {
+	gb := groupsBufferPool.Get().(*GroupsBuffer)
+	gb.Reset()
+	return gb
+}
+
+func (buffer *GroupsBuffer) Reset() {
+	buffer.orderAsc = false
+	buffer.groups = buffer.groups[:0]
+}
+
+func (buffer *GroupsBuffer) Release() {
+	groupsBufferPool.Put(buffer)
+}
+
+// ----
+
+type OutputBuffer struct {
+	bytes.Buffer
+	buf []byte
+}
+
+var outputPool = sync.Pool{
+	New: func() interface{} {
+		return &OutputBuffer{buf: make([]byte, 0, 16*1024)}
+	},
+}
+
+func (buffer *OutputBuffer) Release() {
+	outputPool.Put(buffer)
+}
+
+func BorrowBuffer() *OutputBuffer {
+	b := outputPool.Get().(*OutputBuffer)
+	b.Reset()
+	return b
+}
+
 type ServerOptions struct {
-	Addr string
+	Addr   string
+	Stats  bool
+	Routes ServerRoute
 }
 
 type Server struct {
@@ -38,235 +139,250 @@ func (server *Server) GetStats() *ServerStats {
 }
 
 func (server *Server) Handle() error {
-	handleRouteGet("/accounts/filter/", func(writer http.ResponseWriter, request *http.Request) {
-		// startTime := time.Now()
-
-		filter := NewFilter(server.parser, server.dicts)
-		err := filter.Parse(request.URL.RawQuery)
-		if err != nil {
-			// fmt.Println("Error filter parsing query in", filter.QueryID)
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		accounts := server.store.FilterAll(filter)
-		encoded := server.parser.EncodeAccounts(accounts, filter)
-
-		writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-		writer.WriteHeader(http.StatusOK)
-		writer.Write(encoded)
-
-		// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
-		// server.stats.Add(ServerStatsGetFilter, params, startTime)
-	})
-
-	handleRouteGet("/accounts/group/", func(writer http.ResponseWriter, request *http.Request) {
-		// startTime := time.Now()
-
-		group := NewGroup(server.parser, server.dicts)
-		err := group.Parse(request.URL.RawQuery)
-		if err != nil {
-			// fmt.Println("Error group parsing query in", filter.QueryID)
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		// writer.WriteHeader(http.StatusOK)
-		// writer.Write([]byte(`{"accounts":[]}`))
-
-		groupEntries, orderAsc := server.store.GroupAll(group)
-		encoded := server.parser.EncodeGroupEntries(groupEntries, orderAsc)
-
-		writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-		writer.WriteHeader(http.StatusOK)
-		writer.Write(encoded)
-
-		// params := getParams(request, []string{"limit", "query_id", "order", "keys"})
-		// keys, ok := request.URL.Query()["keys"]
-		// if ok {
-		// 	params = append([]string{"keys:[" + keys[0] + "]"}, params...)
-		// }
-		// paramsStr := strings.Join(params, ",")
-		// server.stats.Add(ServerStatsGetGroup, paramsStr, startTime)
-
-		// d := time.Now().Sub(startTime) / time.Microsecond
-		// if d > 1000 {
-		// 	fmt.Printf("long query = %s, %d mus\n", request.URL.RequestURI(), d)
-		// }
-	})
-
-	handleRoutePost("/accounts/new/", func(writer http.ResponseWriter, request *http.Request) {
-		// startTime := time.Now()
-
-		rawAccount, err := server.parser.DecodeAccount(request.Body, false)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		_, err = server.store.Add(rawAccount, true, true)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		writer.WriteHeader(http.StatusCreated)
-		writer.Write([]byte(`{}`))
-
-		// server.stats.Add(ServerStatsPostNew, "", startTime)
-	})
-
-	handleRoutePost("/accounts/likes/", func(writer http.ResponseWriter, request *http.Request) {
-		// startTime := time.Now()
-
-		rawLikes, err := server.parser.DecodeLikes(request.Body)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		err = server.store.AddLikes(rawLikes, true)
-		if err != nil {
-			writer.WriteHeader(http.StatusBadRequest)
-			return
-		}
-
-		writer.WriteHeader(http.StatusAccepted)
-		writer.Write([]byte(`{}`))
-
-		// server.stats.Add(ServerStatsPostLikes, "", startTime)
-	})
-
+	updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
 	recommendRegexp := regexp.MustCompile("^/accounts/([0-9]+)/recommend/$")
 	suggestRegexp := regexp.MustCompile("^/accounts/([0-9]+)/suggest/$")
-	updateRegex := regexp.MustCompile("^/accounts/([0-9]+)/$")
 
-	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-		recommendMatches := recommendRegexp.FindStringSubmatch(request.URL.Path)
-		suggestMatches := suggestRegexp.FindStringSubmatch(request.URL.Path)
-		updateMatches := updateRegex.FindStringSubmatch(request.URL.Path)
+	handler := func(ctx *fasthttp.RequestCtx) {
+		path := string(ctx.Path())
 
-		switch {
-		case len(recommendMatches) > 0:
-			// startTime := time.Now()
+		// if strings.HasPrefix(path, "/debug") {
+		// 	pprofhandler.PprofHandler(ctx)
+		// 	return
+		// }
 
-			if request.Method != http.MethodGet {
-				writer.WriteHeader(http.StatusMethodNotAllowed)
-				return
+		switch path {
+		case "/accounts/filter/":
+			server.handleFilterRequest(ctx)
+		case "/accounts/group/":
+			server.handleGroupRequest(ctx)
+		case "/accounts/new/":
+			server.handleNewRequest(ctx)
+		case "/accounts/likes/":
+			server.handleLikesRequest(ctx)
+		default:
+			updateMatches := updateRegex.FindStringSubmatch(path)
+			if len(updateMatches) > 0 {
+				server.handleUpdateRequest(ctx, updateMatches)
+			} else {
+				recommendMatches := recommendRegexp.FindStringSubmatch(path)
+				if len(recommendMatches) > 0 {
+					server.handleRecommendRequest(ctx, recommendMatches)
+				} else {
+					suggestMatches := suggestRegexp.FindStringSubmatch(path)
+					if len(suggestMatches) > 0 {
+						server.handleSuggestRequest(ctx, suggestMatches)
+					} else {
+						ctx.NotFound()
+					}
+				}
 			}
-
-			ui64, err := strconv.ParseUint(recommendMatches[1], 10, 32)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			account := server.store.Get(ID(ui64))
-			if account == nil {
-				writer.WriteHeader(http.StatusNotFound)
-				return
-			}
-
-			recommend := NewRecommend(server.store, server.dicts)
-			err = recommend.Parse(request.URL.RawQuery)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			accounts := server.store.RecommendAll(account, recommend)
-			encoded := server.parser.EncodeAccounts(accounts, recommend)
-
-			writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-			writer.WriteHeader(http.StatusOK)
-			writer.Write(encoded)
-
-			// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
-			// server.stats.Add(ServerStatsGetRecommend, params, startTime)
-
-			return
-		case len(suggestMatches) > 0:
-			// startTime := time.Now()
-
-			if request.Method != http.MethodGet {
-				writer.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			ui64, err := strconv.ParseUint(suggestMatches[1], 10, 32)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			account := server.store.Get(ID(ui64))
-			if account == nil {
-				writer.WriteHeader(http.StatusNotFound)
-				return
-			}
-
-			suggest := NewSuggest(server.store, server.dicts)
-			err = suggest.Parse(request.URL.RawQuery)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			accounts := server.store.SuggestAll(account, suggest)
-			encoded := server.parser.EncodeAccounts(accounts, suggest)
-
-			writer.Header().Set("Content-Length", strconv.Itoa(len(encoded)))
-			writer.WriteHeader(http.StatusOK)
-			writer.Write(encoded)
-
-			// params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
-			// server.stats.Add(ServerStatsGetSuggest, params, startTime)
-
-			return
-		case len(updateMatches) > 0:
-			// startTime := time.Now()
-
-			if request.Method != http.MethodPost {
-				writer.WriteHeader(http.StatusMethodNotAllowed)
-				return
-			}
-
-			ui64, err := strconv.ParseUint(updateMatches[1], 10, 32)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			account := server.store.Get(ID(ui64))
-			if account == nil {
-				writer.WriteHeader(http.StatusNotFound)
-				return
-			}
-
-			rawAccount, err := server.parser.DecodeAccount(request.Body, true)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			_, err = server.store.Update(account.ID, rawAccount, true)
-			if err != nil {
-				writer.WriteHeader(http.StatusBadRequest)
-				return
-			}
-
-			writer.WriteHeader(http.StatusAccepted)
-			writer.Write([]byte(`{}`))
-
-			// server.stats.Add(ServerStatsPostUpdate, "", startTime)
-
-			return
 		}
+	}
+	return fasthttp.ListenAndServe(server.options.Addr, handler)
+}
 
-		writer.WriteHeader(http.StatusNotFound)
-	})
+func (srv *Server) handleFilterRequest(ctx *fasthttp.RequestCtx) {
+	filter := BorrowFilter(srv.parser, srv.dicts)
+	defer filter.Release()
 
-	return http.ListenAndServe(server.options.Addr, nil)
+	err := filter.Parse(string(ctx.URI().QueryString()))
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	accounts := BorrowAccountsBuffer()
+	defer accounts.Release()
+
+	srv.store.Filter(filter, accounts)
+
+	buffer := BorrowBuffer()
+	defer buffer.Release()
+
+	srv.parser.EncodeAccounts(*accounts, buffer, filter)
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBodyStream(buffer, buffer.Len())
+
+	// if server.options.Stats {
+	// 	params := strings.Join(getParams(request, []string{"limit", "query_id"}), ",")
+	// 	server.stats.Add(ServerStatsGetFilter, params, st)
+
+	// 	d := time.Now().Sub(st) / time.Microsecond
+	// 	if d > 1000 {
+	// 		fmt.Printf("long query = %s, %d mus\n", request.URL.RequestURI(), d)
+	// 	}
+	// }
+}
+
+func (srv *Server) handleNewRequest(ctx *fasthttp.RequestCtx) {
+	rawAccount := BorrowRawAccount()
+	defer rawAccount.Release()
+
+	err := srv.parser.DecodeAccount(ctx.PostBody(), rawAccount, false)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	_, err = srv.store.Add(rawAccount, true, true)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusCreated)
+	ctx.Write(defaultPostResponse)
+}
+
+func (srv *Server) handleLikesRequest(ctx *fasthttp.RequestCtx) {
+	likes := BorrowLikes()
+	defer likes.Release()
+
+	err := srv.parser.DecodeLikes(ctx.PostBody(), likes)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+	likes.Truncate()
+
+	err = srv.store.AddLikes(likes, true)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusAccepted)
+	ctx.Write(defaultPostResponse)
+}
+
+func (srv *Server) handleUpdateRequest(ctx *fasthttp.RequestCtx, matches []string) {
+	ui64, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	account := srv.store.Get(ID(ui64))
+	if account == nil {
+		ctx.NotFound()
+		return
+	}
+
+	rawAccount := BorrowRawAccount()
+	defer rawAccount.Release()
+
+	err = srv.parser.DecodeAccount(ctx.PostBody(), rawAccount, false)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	_, err = srv.store.Update(account.ID, rawAccount, true)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusAccepted)
+	ctx.Write(defaultPostResponse)
+}
+
+func (srv *Server) handleGroupRequest(ctx *fasthttp.RequestCtx) {
+	group := BorrowGroup(srv.parser, srv.dicts)
+	defer group.Release()
+
+	err := group.Parse(string(ctx.URI().QueryString()))
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	groups := BorrowGroupsBuffer()
+	defer groups.Release()
+
+	srv.store.Group(group, groups)
+
+	buffer := BorrowBuffer()
+	defer buffer.Release()
+
+	srv.parser.EncodeGroupEntries(groups, buffer)
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBodyStream(buffer, buffer.Len())
+}
+
+func (srv *Server) handleSuggestRequest(ctx *fasthttp.RequestCtx, matches []string) {
+	ui64, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	account := srv.store.Get(ID(ui64))
+	if account == nil {
+		ctx.NotFound()
+		return
+	}
+
+	suggest := BorrowSuggest(srv.store, srv.dicts)
+	defer suggest.Release()
+
+	err = suggest.Parse(string(ctx.URI().QueryString()))
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	accounts := BorrowAccountsBuffer()
+	defer accounts.Release()
+
+	srv.store.Suggest(account, suggest, accounts)
+
+	buffer := BorrowBuffer()
+	defer buffer.Release()
+
+	srv.parser.EncodeAccounts(*accounts, buffer, suggest)
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBodyStream(buffer, buffer.Len())
+}
+
+func (srv *Server) handleRecommendRequest(ctx *fasthttp.RequestCtx, matches []string) {
+	ui64, err := strconv.ParseUint(matches[1], 10, 32)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	account := srv.store.Get(ID(ui64))
+	if account == nil {
+		ctx.NotFound()
+		return
+	}
+
+	recommend := BorrowRecommend(srv.store, srv.dicts)
+	defer recommend.Release()
+
+	err = recommend.Parse(string(ctx.URI().QueryString()))
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		return
+	}
+
+	accounts := BorrowAccountsBuffer()
+	defer accounts.Release()
+
+	srv.store.Recommend(account, recommend, accounts)
+
+	buffer := BorrowBuffer()
+	defer buffer.Release()
+
+	srv.parser.EncodeAccounts(*accounts, buffer, recommend)
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBodyStream(buffer, buffer.Len())
 }
 
 type ServerStats struct {

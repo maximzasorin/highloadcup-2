@@ -90,6 +90,17 @@ func (index *IndexYear) Find(year Year) IDS {
 	return make(IDS, 0)
 }
 
+func (index *IndexYear) Iter(year Year) IndexIterator {
+	index.rwLock.RLock()
+	if _, ok := index.years[year]; ok {
+		iter := index.years[year].Iter()
+		index.rwLock.RUnlock()
+		return iter
+	}
+	index.rwLock.RUnlock()
+	return EmptyIndexIterator
+}
+
 func (index *IndexYear) Len() int {
 	index.rwLock.RLock()
 	yearsLen := len(index.years)
